@@ -16,6 +16,8 @@
   let tool = 'pen'; // pen | eraser | fill
   let sizeIdx = 1;
   const undoStack = [];
+  let limbTool = 'hand'; // hand | foot | erase
+  let limbSize = 1;
 
   // ---------- 見た目 ----------
   const style = document.createElement('style');
@@ -48,6 +50,11 @@
 #dp-hint { font-size: 16px; font-weight: 700; max-width: 90%; }
 .dp-btns { display: flex; gap: 12px; flex-wrap: wrap; justify-content: center; }
 .btn:disabled { opacity: .4; cursor: default; }
+#dp-lcv, #dp-lprev { border: 3px solid #151515; border-radius: 8px; touch-action: none; background-color: #c9ced3;
+  background-image: linear-gradient(45deg, #b4bac0 25%, transparent 25%, transparent 75%, #b4bac0 75%), linear-gradient(45deg, #b4bac0 25%, transparent 25%, transparent 75%, #b4bac0 75%);
+  background-size: 28px 28px; background-position: 0 0, 14px 14px; image-rendering: pixelated; }
+#dp-lprev { width: 140px; height: 140px; align-self: center; flex: none; }
+#dp-ltext { font-size: 14px; font-weight: 700; line-height: 1.4; }
 #dp-msg { position: absolute; left: 50%; bottom: 24px; transform: translateX(-50%); background: #151515; color: #fff; border-radius: 10px; padding: 8px 14px; font-size: 14px; opacity: 0; transition: opacity .2s; pointer-events: none; }
 #dp-msg.show { opacity: 1; }
 @media (orientation: portrait) {
@@ -82,6 +89,25 @@
       <button class="btn" data-a="clear">ぜんぶけす</button>
     </div>
     <button class="btn dp-submit" data-a="submit">かけた！</button>
+  </div>
+</div>
+<div class="dp-main" id="dp-limb" hidden>
+  <div class="dp-stage" id="dp-lstage"><canvas id="dp-lcv"></canvas></div>
+  <div class="dp-tools">
+    <canvas id="dp-lprev" width="140" height="140"></canvas>
+    <div id="dp-ltext">なぞって、動かしたいところをえらぼう。手は緑、足は紫。えらんだところが歩くとき・ジャンプのときに動くよ。</div>
+    <div class="dp-row">
+      <button class="btn" data-lt="hand">手をえらぶ</button>
+      <button class="btn" data-lt="foot">足をえらぶ</button>
+      <button class="btn" data-lt="erase">えらびなおし</button>
+    </div>
+    <div class="dp-row">${[0, 1, 2].map((i) => `<button class="btn dp-s" data-ls="${i}" aria-label="太さ${i + 1}"><i style="width:${6 + i * 8}px;height:${6 + i * 8}px"></i></button>`).join('')}</div>
+    <div class="dp-row">
+      <button class="btn" data-a="lclear">ぜんぶ解除</button>
+      <button class="btn" data-a="lback">絵にもどる</button>
+    </div>
+    <button class="btn dp-submit" data-a="lok">これでOK</button>
+    <button class="btn" data-a="lskip">手足なしで決定</button>
   </div>
 </div>
 <div id="dp-wait" hidden>
@@ -123,6 +149,8 @@
     root.querySelectorAll('[data-c]').forEach((b) => b.classList.toggle('sel', +b.dataset.c === colorIdx));
     root.querySelectorAll('[data-t]').forEach((b) => b.classList.toggle('sel', b.dataset.t === tool));
     root.querySelectorAll('[data-s]').forEach((b) => b.classList.toggle('sel', +b.dataset.s === sizeIdx));
+    root.querySelectorAll('[data-lt]').forEach((b) => b.classList.toggle('sel', b.dataset.lt === limbTool));
+    root.querySelectorAll('[data-ls]').forEach((b) => b.classList.toggle('sel', +b.dataset.ls === limbSize));
   }
 
   // ---------- ピクセル処理 ----------
@@ -203,7 +231,7 @@
     c.width = w;
     c.height = h;
     c.getContext('2d').drawImage(cv, minX, minY, w, h, 0, 0, w, h);
-    return { img: c.toDataURL('image/png'), w, h, area, c: counts };
+    return { crop: c, img: c.toDataURL('image/png'), w, h, area, c: counts };
   }
 
   // ---------- 描く ----------
@@ -271,13 +299,178 @@
   cv.addEventListener('pointerup', endStroke);
   cv.addEventListener('pointercancel', endStroke);
 
+  // ---------- 手足をえらぶ ----------
+  const LSIZES = [14, 28, 48]; // ブラシの太さ(画面上のピクセル)
+  let limb = null; // { crop, w, h, area, c, img, mask, drawn }
+  let limbRig = null;
+  let limbRaf = 0;
+  let pLast = 0;
+  const lcv = $('dp-lcv');
+  const lctx = lcv.getContext('2d');
+  const lstageEl = $('dp-lstage');
+  const lprev = $('dp-lprev');
+  const pctx = lprev.getContext('2d');
+  const ov = document.createElement('canvas');
+  const ovctx = ov.getContext('2d');
+  const prevPose = Rig.newPose();
+
+  function fitLimb() {
+    if (!limb) return;
+    const r = lstageEl.getBoundingClientRect();
+    const s = Math.min(8, Math.max(0.5, Math.min((r.width - 6) / limb.w, (r.height - 6) / limb.h)));
+    lcv.style.width = Math.floor(limb.w * s) + 'px';
+    lcv.style.height = Math.floor(limb.h * s) + 'px';
+  }
+  window.addEventListener('resize', fitLimb);
+
+  function renderLimb() {
+    const w = limb.w;
+    const h = limb.h;
+    lctx.clearRect(0, 0, w, h);
+    lctx.drawImage(limb.crop, 0, 0);
+    const id = ovctx.createImageData(w, h);
+    const m = limb.mask;
+    for (let i = 0; i < m.length; i++) {
+      if (!m[i]) continue;
+      const o = i * 4;
+      if (m[i] === 1) { id.data[o] = 34; id.data[o + 1] = 197; id.data[o + 2] = 94; }
+      else { id.data[o] = 168; id.data[o + 1] = 85; id.data[o + 2] = 247; }
+      id.data[o + 3] = 150;
+    }
+    ovctx.putImageData(id, 0, 0);
+    lctx.drawImage(ov, 0, 0);
+  }
+
+  function rebuildLimbRig() {
+    limbRig = Rig.build(limb.crop, limb.mask);
+  }
+
+  function previewLoop(now) {
+    limbRaf = 0;
+    if (root.hidden || $('dp-limb').hidden) return;
+    const dt = Math.min(0.05, (now - pLast) / 1000 || 0.016);
+    pLast = now;
+    const t = (now / 1000) % 4; // 歩く → ジャンプ → 立ち止まる をくりかえす
+    const walking = t < 1.6;
+    const jumping = t >= 1.6 && t < 2.6;
+    const vy = jumping ? -800 + (t - 1.6) * 1600 : 0;
+    Rig.updatePose(prevPose, dt, { vx: walking ? 430 : 0, vy, g: !jumping, hang: false });
+    pctx.clearRect(0, 0, 140, 140);
+    if (limbRig) {
+      const sc = Math.min(2, 112 / limbRig.w, 112 / limbRig.h);
+      pctx.save();
+      pctx.translate(70, 128);
+      pctx.scale(sc, sc);
+      pctx.translate(-limbRig.w / 2, -limbRig.h);
+      Rig.draw(pctx, limbRig, prevPose);
+      pctx.restore();
+    }
+    limbRaf = requestAnimationFrame(previewLoop);
+  }
+  function startPreview() {
+    if (limbRaf) return;
+    pLast = performance.now();
+    limbRaf = requestAnimationFrame(previewLoop);
+  }
+
+  function showLimb(d) {
+    const n = d.w * d.h;
+    const alpha = d.crop.getContext('2d').getImageData(0, 0, d.w, d.h).data;
+    const drawn = new Uint8Array(n);
+    for (let i = 0; i < n; i++) drawn[i] = alpha[i * 4 + 3] >= 128 ? 1 : 0;
+    limb = { crop: d.crop, w: d.w, h: d.h, area: d.area, c: d.c, img: d.img, mask: new Uint8Array(n), drawn };
+    lcv.width = d.w;
+    lcv.height = d.h;
+    ov.width = d.w;
+    ov.height = d.h;
+    limbTool = 'hand';
+    refreshSel();
+    setMode('limb');
+    renderLimb();
+    rebuildLimbRig();
+  }
+
+  let lPaint = false;
+  let lPid = null;
+  let lLast = null;
+
+  function lpos(e) {
+    const r = lcv.getBoundingClientRect();
+    return { x: ((e.clientX - r.left) * limb.w) / r.width, y: ((e.clientY - r.top) * limb.h) / r.height };
+  }
+  function brushR() {
+    const r = lcv.getBoundingClientRect();
+    return ((LSIZES[limbSize] / 2) * limb.w) / r.width; // 絵のピクセル単位の半径
+  }
+  function stampL(p) {
+    const R = brushR();
+    const code = limbTool === 'hand' ? 1 : limbTool === 'foot' ? 2 : 0;
+    const x0 = Math.max(0, Math.floor(p.x - R));
+    const x1 = Math.min(limb.w - 1, Math.ceil(p.x + R));
+    const y0 = Math.max(0, Math.floor(p.y - R));
+    const y1 = Math.min(limb.h - 1, Math.ceil(p.y + R));
+    for (let y = y0; y <= y1; y++) {
+      for (let x = x0; x <= x1; x++) {
+        const i = y * limb.w + x;
+        if (!limb.drawn[i]) continue; // 描いてあるところだけえらべる
+        const dx = x + 0.5 - p.x;
+        const dy = y + 0.5 - p.y;
+        if (dx * dx + dy * dy <= R * R) limb.mask[i] = code;
+      }
+    }
+  }
+  function strokeL(a, b) {
+    const R = brushR();
+    const dist = Math.hypot(b.x - a.x, b.y - a.y);
+    const n = Math.max(1, Math.ceil(dist / Math.max(0.5, R / 2)));
+    for (let k = 1; k <= n; k++) {
+      stampL({ x: a.x + ((b.x - a.x) * k) / n, y: a.y + ((b.y - a.y) * k) / n });
+    }
+  }
+
+  lcv.addEventListener('pointerdown', (e) => {
+    if (lPaint || !limb) return;
+    e.preventDefault();
+    lcv.setPointerCapture(e.pointerId);
+    lPid = e.pointerId;
+    lPaint = true;
+    lLast = lpos(e);
+    stampL(lLast);
+    renderLimb();
+  });
+  lcv.addEventListener('pointermove', (e) => {
+    if (!lPaint || e.pointerId !== lPid) return;
+    e.preventDefault();
+    const p = lpos(e);
+    strokeL(lLast, p);
+    lLast = p;
+    renderLimb();
+  });
+  const endL = (e) => {
+    if (!lPaint || e.pointerId !== lPid) return;
+    lPaint = false;
+    lPid = null;
+    rebuildLimbRig();
+  };
+  lcv.addEventListener('pointerup', endL);
+  lcv.addEventListener('pointercancel', endL);
+
+  function finishLimb(skip) {
+    const rig = Rig.build(limb.crop, skip ? null : limb.mask);
+    if (!rig) return msg('からだの部分も残してね');
+    $('dp-prev').src = limb.img;
+    if (handlers.onSubmit) handlers.onSubmit({ rig: Rig.serialize(rig), area: limb.area, c: limb.c, img: limb.img });
+  }
+
   // ---------- ボタン ----------
   root.addEventListener('click', (e) => {
-    const b = e.target.closest('[data-c],[data-t],[data-s],[data-a]');
+    const b = e.target.closest('[data-c],[data-t],[data-s],[data-a],[data-lt],[data-ls]');
     if (!b) return;
     if (b.dataset.c !== undefined) { colorIdx = +b.dataset.c; if (tool === 'eraser') tool = 'pen'; refreshSel(); return; }
     if (b.dataset.t !== undefined) { tool = b.dataset.t; refreshSel(); return; }
     if (b.dataset.s !== undefined) { sizeIdx = +b.dataset.s; refreshSel(); return; }
+    if (b.dataset.lt !== undefined) { limbTool = b.dataset.lt; refreshSel(); return; }
+    if (b.dataset.ls !== undefined) { limbSize = +b.dataset.ls; refreshSel(); return; }
 
     const a = b.dataset.a;
     if (a === 'undo') {
@@ -290,8 +483,17 @@
       const r = analyze();
       if (!r) return msg('なにか描いてね');
       if (r.w < 16 || r.h < 16) return msg('もう少し大きく描いてね');
-      $('dp-prev').src = r.img;
-      if (handlers.onSubmit) handlers.onSubmit(r);
+      showLimb(r);
+    } else if (a === 'lback') {
+      setMode('draw');
+    } else if (a === 'lclear') {
+      limb.mask.fill(0);
+      renderLimb();
+      rebuildLimbRig();
+    } else if (a === 'lok') {
+      finishLimb(false);
+    } else if (a === 'lskip') {
+      finishLimb(true);
     } else if (a === 'redraw') {
       if (handlers.onRedraw) handlers.onRedraw();
     } else if (a === 'start') {
@@ -304,16 +506,25 @@
   refreshSel();
 
   // ---------- 外から使う入り口 ----------
-  function setMode(mode) {
-    $('dp-draw').hidden = mode !== 'draw';
-    $('dp-wait').hidden = mode !== 'wait';
-    $('dp-roster').parentElement.querySelector('.dp-title').textContent = mode === 'draw' ? 'キャラをかこう' : 'みんなを待っています';
-    if (mode === 'draw') requestAnimationFrame(fit);
+  let mode = 'draw';
+  const TITLES = { draw: 'キャラをかこう', limb: '手と足をえらぼう', wait: 'みんなを待っています' };
+  function setMode(m) {
+    mode = m;
+    $('dp-draw').hidden = m !== 'draw';
+    $('dp-limb').hidden = m !== 'limb';
+    $('dp-wait').hidden = m !== 'wait';
+    root.querySelector('.dp-title').textContent = TITLES[m];
+    if (m === 'draw') requestAnimationFrame(fit);
+    if (m === 'limb') { requestAnimationFrame(fitLimb); startPreview(); }
   }
 
   window.DrawPad = {
     init(h) { handlers = h || {}; },
-    open(mode) { root.hidden = false; setMode(mode || 'draw'); },
+    open(m) {
+      root.hidden = false;
+      if (m === 'draw' && mode === 'limb') return; // 手足をえらんでいる最中は、そのまま
+      setMode(m || 'draw');
+    },
     close() { root.hidden = true; },
     isOpen() { return !root.hidden; },
     setPreview(url) { $('dp-prev').src = url; },
