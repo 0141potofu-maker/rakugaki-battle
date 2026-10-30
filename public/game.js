@@ -15,17 +15,22 @@
 
   // ---------- 状態 ----------
   const room = match[1].toLowerCase();
-  const COLORS = ['#e5322d', '#2563e8', '#f5c518', '#ffffff']; // P1〜P4
   const INK = '#151515';
+  const DEF = { w: 56, h: 84 }; // 絵が届くまでの仮の大きさ
 
   let ws = null;
   let me = -1;
-  let stage = { w: 1800, top: 0, depth: 300 };
-  let body = { w: 56, h: 84 };
+  let stage = { w: 1800, top: 0, depth: 300, wall: 180 };
+  let phase = 'draw';
+  let submitted = false;
+  let hintCount = 0; // 崖つかまりのヒントを出した回数
+  let roomFull = false;
+  let roster = []; // [{s, r}]
   const players = new Map(); // slot -> {x,y,tx,ty,f,g}
+  const arts = new Map();    // slot -> {img, ok, w, h}
 
   function setStatus(text) { $('status').textContent = text || ''; }
-  function updateCount() { $('count').textContent = players.size + ' / 4人'; }
+  function updateCount() { $('count').textContent = roster.length + ' / 4人'; }
 
   let toastTimer = 0;
   function toast(text) {
@@ -36,26 +41,74 @@
     toastTimer = setTimeout(() => t.classList.remove('show'), 1800);
   }
 
+  // ---------- お絵描き画面とのやりとり ----------
+  function applyRoster() {
+    const meReady = roster.some((p) => p.s === me && p.r);
+    const everyone = roster.length > 0 && roster.every((p) => p.r);
+    DrawPad.setRoster(roster, me, everyone);
+    updateCount();
+    if (!(submitted || meReady)) DrawPad.open('draw');
+    else if (phase === 'draw') DrawPad.open('wait');
+    else DrawPad.close();
+  }
+
+  DrawPad.init({
+    onSubmit(d) {
+      submitted = true;
+      sendRaw({ t: 'art', img: d.img, w: d.w, h: d.h, area: d.area, c: d.c });
+      DrawPad.open('wait');
+    },
+    onRedraw() {
+      submitted = false;
+      sendRaw({ t: 'redraw' });
+      DrawPad.open('draw');
+    },
+    onStart() { sendRaw({ t: 'start' }); },
+    onInvite() { invite(); },
+  });
+
   // ---------- 通信 ----------
+  function sendRaw(obj) {
+    if (ws && ws.readyState === 1) ws.send(JSON.stringify(obj));
+  }
+
   let sentInput = '';
   function connect() {
     setStatus('つないでいます…');
-    ws = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws');
+    const sock = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws');
+    ws = sock;
 
-    ws.onopen = () => {
+    sock.onopen = () => {
       sentInput = '';
-      ws.send(JSON.stringify({ t: 'join', room }));
+      sock.send(JSON.stringify({ t: 'join', room }));
     };
 
-    ws.onmessage = (e) => {
+    sock.onmessage = (e) => {
       const m = JSON.parse(e.data);
       if (m.t === 'welcome') {
         me = m.you;
         stage = m.stage;
-        body = m.body;
+        phase = m.phase;
+        submitted = false;
         setStatus('');
+        DrawPad.open('draw');
       } else if (m.t === 'full') {
+        roomFull = true;
+        DrawPad.close();
         setStatus('この部屋は満員です(最大4人)。');
+      } else if (m.t === 'art') {
+        const im = new Image();
+        const a = { img: im, ok: false, w: m.w, h: m.h };
+        im.onload = () => { a.ok = true; };
+        im.src = m.img;
+        arts.set(m.s, a);
+      } else if (m.t === 'roster') {
+        phase = m.phase;
+        roster = m.p;
+        for (const s of [...arts.keys()]) {
+          if (!roster.some((p) => p.s === s && p.r)) arts.delete(s);
+        }
+        applyRoster();
       } else if (m.t === 'state') {
         const alive = new Set();
         for (const p of m.p) {
@@ -65,17 +118,26 @@
             o = { x: p.x, y: p.y, tx: p.x, ty: p.y, f: p.f, g: p.g };
             players.set(p.s, o);
           }
-          o.tx = p.x; o.ty = p.y; o.f = p.f; o.g = p.g;
+          const wasHang = o.h;
+          o.tx = p.x; o.ty = p.y; o.f = p.f; o.g = p.g; o.h = p.h;
+          if (p.s === me && p.h && !wasHang && hintCount < 2) {
+            hintCount++;
+            toast('つかまった！ ' + (p.x < 0 ? '▶' : '◀') + 'でのぼる / ジャンプで飛び上がる');
+          }
         }
         for (const s of [...players.keys()]) if (!alive.has(s)) players.delete(s);
-        updateCount();
       }
     };
 
-    ws.onclose = () => {
-      if ($('status').textContent !== 'この部屋は満員です(最大4人)。') {
-        setStatus('切断されました。ページを開き直してください。');
-      }
+    sock.onclose = () => {
+      if (ws !== sock || roomFull) return;
+      players.clear();
+      arts.clear();
+      roster = [];
+      me = -1;
+      submitted = false;
+      setStatus('つなぎ直しています…');
+      setTimeout(connect, 1500);
     };
   }
 
@@ -96,7 +158,7 @@
   };
   window.addEventListener('keydown', (e) => {
     const k = KEYMAP[e.code];
-    if (!k) return;
+    if (!k || DrawPad.isOpen()) return;
     e.preventDefault();
     input[k] = 1;
     sendInput();
@@ -104,7 +166,7 @@
   window.addEventListener('keyup', (e) => {
     const k = KEYMAP[e.code];
     if (!k) return;
-    e.preventDefault();
+    if (!DrawPad.isOpen()) e.preventDefault();
     input[k] = 0;
     sendInput();
   });
@@ -132,7 +194,7 @@
   document.addEventListener('contextmenu', (e) => e.preventDefault());
 
   // ---------- 招待リンク ----------
-  $('invite').onclick = async () => {
+  async function invite() {
     const url = location.href;
     try {
       if (navigator.share && /Mobi|Android|iPad/i.test(navigator.userAgent)) {
@@ -140,11 +202,13 @@
       } else {
         await navigator.clipboard.writeText(url);
         toast('リンクをコピーしました');
+        if (DrawPad.isOpen()) DrawPad.toast('リンクをコピーしました');
       }
     } catch (err) {
       // 共有をキャンセルした場合など
     }
-  };
+  }
+  $('invite').onclick = invite;
 
   // ---------- 描画 ----------
   const cv = $('cv');
@@ -162,15 +226,21 @@
 
   const cam = { x: 0, y: -80, s: 0.5, ready: false };
 
+  function sizeOf(slot) {
+    const a = arts.get(slot);
+    return a ? { w: a.w, h: a.h } : DEF;
+  }
+
   function updateCamera(dt) {
     let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
-    for (const o of players.values()) {
-      minX = Math.min(minX, o.x - body.w / 2);
-      maxX = Math.max(maxX, o.x + body.w / 2);
-      minY = Math.min(minY, o.y - body.h);
+    for (const [slot, o] of players) {
+      const b = sizeOf(slot);
+      minX = Math.min(minX, o.x - b.w / 2);
+      maxX = Math.max(maxX, o.x + b.w / 2);
+      minY = Math.min(minY, o.y - b.h);
       maxY = Math.max(maxY, o.y);
     }
-    if (minX === Infinity) { minX = maxX = 0; minY = -body.h; maxY = 0; }
+    if (minX === Infinity) { minX = maxX = 0; minY = -DEF.h; maxY = 0; }
 
     const spanX = Math.max(maxX - minX + 700, 1000);
     const spanY = Math.max(maxY - minY + 500, 600);
@@ -207,11 +277,14 @@
     ctx.strokeStyle = INK;
 
     ctx.fillStyle = '#2a2a33';
+    const wallBottom = top + stage.wall; // ここまでは垂直な壁、そこから下はせまくなる
     ctx.beginPath();
     ctx.moveTo(-half, top);
     ctx.lineTo(half, top);
+    ctx.lineTo(half, wallBottom);
     ctx.lineTo(half - 140, bottom);
     ctx.lineTo(-half + 140, bottom);
+    ctx.lineTo(-half, wallBottom);
     ctx.closePath();
     ctx.fill();
     ctx.stroke();
@@ -223,23 +296,25 @@
   function drawPlayer(slot, o) {
     const x = o.x;
     const y = o.y;
-    const w = body.w;
-    const h = body.h;
+    const a = arts.get(slot);
+    const w = a ? a.w : DEF.w;
+    const h = a ? a.h : DEF.h;
 
-    ctx.fillStyle = COLORS[slot % COLORS.length];
-    ctx.strokeStyle = INK;
-    ctx.lineWidth = 5;
-    roundRect(x - w / 2, y - h, w, h, 14);
-    ctx.fill();
-    ctx.stroke();
-
-    // 目(向いている方向に寄せる)
-    ctx.fillStyle = INK;
-    const ex = x + o.f * 9;
-    ctx.beginPath();
-    ctx.arc(ex - 8, y - h + 28, 4.5, 0, Math.PI * 2);
-    ctx.arc(ex + 8, y - h + 28, 4.5, 0, Math.PI * 2);
-    ctx.fill();
+    if (a && a.ok) {
+      // 描いた絵は右向き。左を向くときは左右を反転する
+      ctx.save();
+      ctx.translate(x, y);
+      ctx.scale(o.f < 0 ? -1 : 1, 1);
+      ctx.drawImage(a.img, -w / 2, -h, w, h);
+      ctx.restore();
+    } else {
+      ctx.fillStyle = '#bbb';
+      ctx.strokeStyle = INK;
+      ctx.lineWidth = 5;
+      roundRect(x - w / 2, y - h, w, h, 14);
+      ctx.fill();
+      ctx.stroke();
+    }
 
     // 名前
     ctx.font = '700 22px sans-serif';
