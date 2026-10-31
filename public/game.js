@@ -29,6 +29,10 @@
   let myVote = false;  // 「もういちど」を押した
   const effects = [];  // ヒットや撃墜のエフェクト
   const SLOT_COLORS = ['#e5322d', '#2563e8', '#f5c518', '#ffffff'];
+  const COLOR_NAMES = ['赤', '青', '黄', '白', '黒'];
+  const HIT_COLORS = ['#e5322d', '#2563e8', '#f5c518', '#ffffff', '#777777'];
+  const fxList = [];   // 技の当たり判定の見た目 {sh, t}
+  let projs = [];      // 飛んでいる弾 {x,y,r,c,vx,vy,t}
   let roster = []; // [{s, r}]
   const players = new Map(); // slot -> {x,y,tx,ty,f,g}
   const arts = new Map();    // slot -> {rig, w, h}  (w,hはゲーム内の大きさ)
@@ -75,12 +79,19 @@
   function updateCount() { $('count').textContent = roster.length + ' / 4人'; }
 
   let toastTimer = 0;
-  function toast(text) {
+  function toast(text, ms) {
     const t = $('toast');
     t.textContent = text;
     t.classList.add('show');
     clearTimeout(toastTimer);
-    toastTimer = setTimeout(() => t.classList.remove('show'), 1800);
+    toastTimer = setTimeout(() => t.classList.remove('show'), ms || 1800);
+  }
+
+  // 自分の技(必殺と通常の色)を、試合のはじめに知らせる
+  function showMoves() {
+    const a = arts.get(me);
+    if (!a || a.sp === undefined) return;
+    toast('ひっさつ: ' + COLOR_NAMES[a.sp] + '(Xボタン)  /  つうじょう: ' + COLOR_NAMES[a.nm] + '(Zボタン)', 4500);
   }
 
   // ---------- お絵描き画面とのやりとり ----------
@@ -139,9 +150,12 @@
         DrawPad.close();
         setStatus('この部屋は満員です(最大4人)。');
       } else if (m.t === 'art') {
-        arts.set(m.s, { rig: Rig.load(m.rig), w: m.w, h: m.h });
+        arts.set(m.s, { rig: Rig.load(m.rig), w: m.w, h: m.h, sp: m.sp, nm: m.nm });
+        if (m.s === me && phase === 'play') showMoves();
       } else if (m.t === 'roster') {
+        const prevPhase = phase;
         phase = m.phase;
+        if (phase === 'play' && prevPhase !== 'play') showMoves();
         roster = m.p;
         for (const s of [...arts.keys()]) {
           if (!roster.some((p) => p.s === s && p.r)) arts.delete(s);
@@ -161,16 +175,19 @@
           }
           const wasHang = o.h;
           o.tx = p.x; o.ty = p.y; o.f = p.f; o.g = p.g; o.h = p.h; o.vx = p.vx; o.vy = p.vy;
-          o.d = p.d; o.st = p.st; o.l = p.l; o.iv = p.iv; o.hs = p.hs; o.at = p.at;
+          o.d = p.d; o.st = p.st; o.l = p.l; o.iv = p.iv; o.hs = p.hs; o.at = p.at; o.tt = p.tt; o.ms = p.ms; o.ch = p.ch;
+          if (p.fx) for (const sh of p.fx) fxList.push({ sh, t: performance.now() });
           if (p.s === me && p.h && !wasHang && hintCount < 2) {
             hintCount++;
             toast('つかまった！ ' + (p.x < 0 ? '▶' : '◀') + 'でのぼる / ジャンプで飛び上がる');
           }
         }
         for (const s of [...players.keys()]) if (!alive.has(s)) players.delete(s);
+        const tn = performance.now();
+        projs = (m.pj || []).map((b) => ({ x: b[0], y: b[1], r: b[2], c: b[3], vx: b[4], vy: b[5], t: tn }));
         if (m.ev) {
           const now = performance.now();
-          for (const e of m.ev) effects.push({ k: e.k, x: e.x, y: e.y, t: now });
+          for (const e of m.ev) effects.push({ k: e.k, x: e.x, y: e.y, c: e.c, t: now });
         }
       }
     };
@@ -355,6 +372,29 @@
     const w = a ? a.w : DEF.w;
     const h = a ? a.h : DEF.h;
 
+    // 溜めているとき: まわりに輪が集まってくる
+    if (o.ch > 0) {
+      const k = o.ch / 100;
+      const now = performance.now();
+      ctx.save();
+      ctx.translate(x, y - h / 2);
+      ctx.lineWidth = 6;
+      for (let n = 0; n < 3; n++) {
+        const ph = (now / 400 + n / 3) % 1;
+        ctx.globalAlpha = 0.55 * (1 - ph) * (0.4 + k);
+        ctx.strokeStyle = INK;
+        ctx.beginPath();
+        ctx.arc(0, 0, (Math.max(w, h) * 0.5 + 70) * (1 - ph) + 10, 0, Math.PI * 2);
+        ctx.stroke();
+      }
+      ctx.globalAlpha = 0.18 + 0.3 * k;
+      ctx.fillStyle = INK;
+      ctx.beginPath();
+      ctx.arc(0, 0, Math.max(w, h) * 0.55 + 12 * k, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    }
+
     ctx.save();
     if (o.iv && Math.floor(performance.now() / 80) % 2) ctx.globalAlpha = 0.35; // 復活直後の無敵はチカチカ
     if (a) {
@@ -416,12 +456,132 @@
       const o = players.get(slot);
       if (!o.l) drawPlayer(slot, o);
     }
+    drawMoveFx();
     drawHitEffects();
 
     // ここから画面に固定して描く
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     drawKoEffects();
     drawHud();
+  }
+
+  // 色ごとの、丸い技(火・水・雷・連続ヒット・溜め)の見た目
+  function drawBlob(x, y, r, col, now) {
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.lineJoin = 'round';
+    if (col === 0) {
+      // 赤: 火
+      const wob = 1 + 0.1 * Math.sin(now * 0.05 + x * 0.1);
+      ctx.fillStyle = 'rgba(229,50,45,0.85)';
+      ctx.beginPath(); ctx.arc(0, 0, r * wob, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = 'rgba(245,197,24,0.95)';
+      ctx.beginPath(); ctx.arc(0, -r * 0.1, r * 0.55 * wob, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = 'rgba(255,255,255,0.8)';
+      ctx.beginPath(); ctx.arc(0, -r * 0.15, r * 0.22, 0, Math.PI * 2); ctx.fill();
+    } else if (col === 1) {
+      // 青: 水
+      ctx.fillStyle = 'rgba(37,99,232,0.7)';
+      ctx.beginPath(); ctx.arc(0, 0, r, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = 'rgba(170,210,255,0.9)';
+      ctx.beginPath(); ctx.arc(-r * 0.2, -r * 0.2, r * 0.5, 0, Math.PI * 2); ctx.fill();
+      ctx.strokeStyle = '#fff';
+      ctx.lineWidth = 3;
+      ctx.beginPath(); ctx.arc(0, 0, r, 0, Math.PI * 2); ctx.stroke();
+    } else if (col === 2) {
+      // 黄: 雷
+      ctx.fillStyle = 'rgba(245,197,24,0.8)';
+      ctx.beginPath(); ctx.arc(0, 0, r, 0, Math.PI * 2); ctx.fill();
+      ctx.lineCap = 'round';
+      for (let k = 0; k < 4; k++) {
+        const ang = (k * Math.PI) / 2 + now * 0.01;
+        ctx.beginPath();
+        ctx.moveTo(0, 0);
+        ctx.lineTo(Math.cos(ang) * r * 0.5 + Math.sin(ang) * r * 0.2, Math.sin(ang) * r * 0.5 - Math.cos(ang) * r * 0.2);
+        ctx.lineTo(Math.cos(ang) * r * 1.0, Math.sin(ang) * r * 1.0);
+        ctx.strokeStyle = INK; ctx.lineWidth = 7; ctx.stroke();
+        ctx.strokeStyle = '#fff'; ctx.lineWidth = 3; ctx.stroke();
+      }
+    } else if (col === 3) {
+      // 白: 連続ヒット
+      ctx.fillStyle = 'rgba(255,255,255,0.92)';
+      ctx.strokeStyle = INK;
+      ctx.lineWidth = 4;
+      ctx.beginPath(); ctx.arc(0, 0, r, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+      ctx.lineCap = 'round';
+      ctx.lineWidth = 4;
+      for (let k = 0; k < 6; k++) {
+        const ang = (k * Math.PI) / 3 + now * 0.02;
+        ctx.beginPath();
+        ctx.moveTo(Math.cos(ang) * r * 0.25, Math.sin(ang) * r * 0.25);
+        ctx.lineTo(Math.cos(ang) * r * 0.75, Math.sin(ang) * r * 0.75);
+        ctx.stroke();
+      }
+    } else {
+      // 黒: 重い一撃
+      ctx.fillStyle = 'rgba(21,21,21,0.82)';
+      ctx.strokeStyle = '#e5322d';
+      ctx.lineWidth = 4;
+      ctx.beginPath(); ctx.arc(0, 0, r, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+      ctx.fillStyle = 'rgba(255,255,255,0.25)';
+      ctx.beginPath(); ctx.arc(-r * 0.25, -r * 0.25, r * 0.3, 0, Math.PI * 2); ctx.fill();
+    }
+    ctx.restore();
+  }
+
+  // 縦に落ちる雷の柱(四角い当たり判定)
+  function drawBolt(x0, y0, x1, y1, col, now) {
+    const w = x1 - x0;
+    const cx = (x0 + x1) / 2;
+    ctx.save();
+    ctx.fillStyle = col === 2 ? 'rgba(245,197,24,0.4)' : 'rgba(255,255,255,0.4)';
+    ctx.fillRect(x0, y0, w, y1 - y0);
+    ctx.lineJoin = 'miter';
+    ctx.lineCap = 'round';
+    const steps = 8;
+    ctx.beginPath();
+    ctx.moveTo(cx, y0);
+    for (let k = 1; k <= steps; k++) {
+      const yy = y0 + ((y1 - y0) * k) / steps;
+      const jig = (k % 2 ? -1 : 1) * w * 0.25 * (0.7 + 0.3 * Math.sin(now * 0.04 + k));
+      ctx.lineTo(cx + (k === steps ? 0 : jig), yy);
+    }
+    ctx.strokeStyle = INK; ctx.lineWidth = 14; ctx.stroke();
+    ctx.strokeStyle = '#fff'; ctx.lineWidth = 8; ctx.stroke();
+    ctx.strokeStyle = '#f5c518'; ctx.lineWidth = 3; ctx.stroke();
+    ctx.restore();
+  }
+
+  // 技の見た目(当たり判定のかたち)と、飛んでいる弾
+  function drawMoveFx() {
+    const now = performance.now();
+    for (let i = fxList.length - 1; i >= 0; i--) {
+      const f = fxList[i];
+      const age = now - f.t;
+      if (age > 170) { fxList.splice(i, 1); continue; }
+      const sh = f.sh;
+      ctx.globalAlpha = 1 - (age / 170) * 0.6;
+      if (sh[0] === 0) drawBlob(sh[1], sh[2], sh[3], sh[4], now);
+      else drawBolt(sh[1], sh[2], sh[3], sh[4], sh[5], now);
+      ctx.globalAlpha = 1;
+    }
+    for (const b of projs) {
+      const dt = Math.min(0.12, (now - b.t) / 1000);
+      const x = b.x + b.vx * dt;
+      const y = b.y + b.vy * dt;
+      // しっぽ
+      ctx.save();
+      ctx.globalAlpha = 0.35;
+      ctx.lineCap = 'round';
+      ctx.lineWidth = b.r * 1.2;
+      ctx.strokeStyle = ['#e5322d', '#2563e8', '#f5c518', '#ffffff', '#151515'][b.c] || '#2563e8';
+      ctx.beginPath();
+      ctx.moveTo(x - b.vx * 0.05, y - b.vy * 0.05);
+      ctx.lineTo(x, y);
+      ctx.stroke();
+      ctx.restore();
+      drawBlob(x, y, b.r, b.c, now);
+    }
   }
 
   // ヒットのエフェクト(当たった場所に放射状の線)
@@ -445,7 +605,7 @@
         ctx.moveTo(Math.cos(ang) * r0, Math.sin(ang) * r0);
         ctx.lineTo(Math.cos(ang) * r1, Math.sin(ang) * r1);
         ctx.stroke();
-        ctx.strokeStyle = '#fff';
+        ctx.strokeStyle = HIT_COLORS[e.c] || '#fff';
         ctx.lineWidth = 6;
         ctx.stroke();
       }
@@ -553,7 +713,7 @@
       if (Math.abs(o.tx - o.x) > 300 || Math.abs(o.ty - o.y) > 300) { o.x = o.tx; o.y = o.ty; }
       o.x += (o.tx - o.x) * k;
       o.y += (o.ty - o.y) * k;
-      Rig.updatePose(o.pose, dt, { vx: o.vx, vy: o.vy, g: o.g, hang: o.h, hs: o.hs, at: o.at });
+      Rig.updatePose(o.pose, dt, { vx: o.vx, vy: o.vy, g: o.g, hang: o.h, hs: o.hs, at: o.at, tt: o.tt, ms: o.ms });
     }
 
     updateCamera(dt);
