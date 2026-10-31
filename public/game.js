@@ -27,7 +27,7 @@
   let roomFull = false;
   let roster = []; // [{s, r}]
   const players = new Map(); // slot -> {x,y,tx,ty,f,g}
-  const arts = new Map();    // slot -> {img, ok, w, h}
+  const arts = new Map();    // slot -> {rig, w, h}  (w,hはゲーム内の大きさ)
 
   function setStatus(text) { $('status').textContent = text || ''; }
   function updateCount() { $('count').textContent = roster.length + ' / 4人'; }
@@ -55,7 +55,7 @@
   DrawPad.init({
     onSubmit(d) {
       submitted = true;
-      sendRaw({ t: 'art', img: d.img, w: d.w, h: d.h, area: d.area, c: d.c });
+      sendRaw({ t: 'art', rig: d.rig, area: d.area, c: d.c });
       DrawPad.open('wait');
     },
     onRedraw() {
@@ -97,11 +97,7 @@
         DrawPad.close();
         setStatus('この部屋は満員です(最大4人)。');
       } else if (m.t === 'art') {
-        const im = new Image();
-        const a = { img: im, ok: false, w: m.w, h: m.h };
-        im.onload = () => { a.ok = true; };
-        im.src = m.img;
-        arts.set(m.s, a);
+        arts.set(m.s, { rig: Rig.load(m.rig), w: m.w, h: m.h });
       } else if (m.t === 'roster') {
         phase = m.phase;
         roster = m.p;
@@ -115,11 +111,11 @@
           alive.add(p.s);
           let o = players.get(p.s);
           if (!o) {
-            o = { x: p.x, y: p.y, tx: p.x, ty: p.y, f: p.f, g: p.g };
+            o = { x: p.x, y: p.y, tx: p.x, ty: p.y, f: p.f, g: p.g, vx: 0, vy: 0, pose: Rig.newPose() };
             players.set(p.s, o);
           }
           const wasHang = o.h;
-          o.tx = p.x; o.ty = p.y; o.f = p.f; o.g = p.g; o.h = p.h;
+          o.tx = p.x; o.ty = p.y; o.f = p.f; o.g = p.g; o.h = p.h; o.vx = p.vx; o.vy = p.vy;
           if (p.s === me && p.h && !wasHang && hintCount < 2) {
             hintCount++;
             toast('つかまった！ ' + (p.x < 0 ? '▶' : '◀') + 'でのぼる / ジャンプで飛び上がる');
@@ -300,12 +296,14 @@
     const w = a ? a.w : DEF.w;
     const h = a ? a.h : DEF.h;
 
-    if (a && a.ok) {
+    if (a) {
       // 描いた絵は右向き。左を向くときは左右を反転する
+      const S = a.w / a.rig.w;
       ctx.save();
       ctx.translate(x, y);
-      ctx.scale(o.f < 0 ? -1 : 1, 1);
-      ctx.drawImage(a.img, -w / 2, -h, w, h);
+      ctx.scale((o.f < 0 ? -1 : 1) * S, S);
+      ctx.translate(-a.rig.w / 2, -a.rig.h);
+      Rig.draw(ctx, a.rig, o.pose);
       ctx.restore();
     } else {
       ctx.fillStyle = '#bbb';
@@ -365,6 +363,7 @@
       if (Math.abs(o.tx - o.x) > 300 || Math.abs(o.ty - o.y) > 300) { o.x = o.tx; o.y = o.ty; }
       o.x += (o.tx - o.x) * k;
       o.y += (o.ty - o.y) * k;
+      Rig.updatePose(o.pose, dt, { vx: o.vx, vy: o.vy, g: o.g, hang: o.h });
     }
 
     updateCamera(dt);
