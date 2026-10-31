@@ -25,9 +25,51 @@
   let submitted = false;
   let hintCount = 0; // 崖つかまりのヒントを出した回数
   let roomFull = false;
+  let winner = -1;     // 勝った人の番号(-1はひきわけ)
+  let myVote = false;  // 「もういちど」を押した
+  const effects = [];  // ヒットや撃墜のエフェクト
+  const SLOT_COLORS = ['#e5322d', '#2563e8', '#f5c518', '#ffffff'];
   let roster = []; // [{s, r}]
   const players = new Map(); // slot -> {x,y,tx,ty,f,g}
   const arts = new Map();    // slot -> {rig, w, h}  (w,hはゲーム内の大きさ)
+
+  // 試合が終わったときの画面
+  const rsStyle = document.createElement('style');
+  rsStyle.textContent = `
+#rs { position: fixed; inset: 0; z-index: 90; display: flex; align-items: center; justify-content: center; background: rgba(207,227,242,.65); }
+#rs[hidden] { display: none; }
+.rs-box { background: #fff; border: 3px solid #151515; border-radius: 16px; box-shadow: 5px 5px 0 #151515; padding: 22px 30px; text-align: center; display: flex; flex-direction: column; gap: 12px; align-items: center; max-width: 90%; }
+#rs-title { font-size: 34px; font-weight: 700; }
+#rs-sub { font-size: 15px; font-weight: 700; opacity: .75; }
+`;
+  document.head.appendChild(rsStyle);
+  const rs = document.createElement('div');
+  rs.id = 'rs';
+  rs.hidden = true;
+  rs.innerHTML = '<div class="rs-box"><div id="rs-title"></div><div id="rs-sub"></div><button class="btn big" id="rs-btn">もういちど</button></div>';
+  document.body.appendChild(rs);
+  $('rs-btn').onclick = () => {
+    myVote = true;
+    sendRaw({ t: 'rematch' });
+    updateResult();
+  };
+
+  function updateResult() {
+    if (phase !== 'result') {
+      rs.hidden = true;
+      myVote = false;
+      return;
+    }
+    rs.hidden = false;
+    $('rs-title').textContent = winner < 0 ? 'ひきわけ！' : winner === me ? 'あなたのかち！' : 'P' + (winner + 1) + ' のかち！';
+    const act = roster.filter((p) => p.r);
+    const votes = act.filter((p) => p.v).length;
+    const mine = myVote || roster.some((p) => p.s === me && p.v);
+    $('rs-sub').textContent = mine
+      ? 'ほかの人を待っています… (' + votes + '/' + act.length + ')'
+      : 'みんなが押すと、同じキャラでもう一度はじまるよ';
+    $('rs-btn').disabled = mine;
+  }
 
   function setStatus(text) { $('status').textContent = text || ''; }
   function updateCount() { $('count').textContent = roster.length + ' / 4人'; }
@@ -105,6 +147,9 @@
           if (!roster.some((p) => p.s === s && p.r)) arts.delete(s);
         }
         applyRoster();
+        updateResult();
+      } else if (m.t === 'result') {
+        winner = m.w;
       } else if (m.t === 'state') {
         const alive = new Set();
         for (const p of m.p) {
@@ -116,12 +161,17 @@
           }
           const wasHang = o.h;
           o.tx = p.x; o.ty = p.y; o.f = p.f; o.g = p.g; o.h = p.h; o.vx = p.vx; o.vy = p.vy;
+          o.d = p.d; o.st = p.st; o.l = p.l; o.iv = p.iv; o.hs = p.hs; o.at = p.at;
           if (p.s === me && p.h && !wasHang && hintCount < 2) {
             hintCount++;
             toast('つかまった！ ' + (p.x < 0 ? '▶' : '◀') + 'でのぼる / ジャンプで飛び上がる');
           }
         }
         for (const s of [...players.keys()]) if (!alive.has(s)) players.delete(s);
+        if (m.ev) {
+          const now = performance.now();
+          for (const e of m.ev) effects.push({ k: e.k, x: e.x, y: e.y, t: now });
+        }
       }
     };
 
@@ -138,9 +188,9 @@
   }
 
   // ---------- 入力 ----------
-  const input = { l: 0, r: 0, j: 0 };
+  const input = { l: 0, r: 0, j: 0, a: 0, b: 0 };
   function sendInput() {
-    const s = JSON.stringify({ t: 'input', l: input.l, r: input.r, j: input.j });
+    const s = JSON.stringify({ t: 'input', l: input.l, r: input.r, j: input.j, a: input.a, b: input.b });
     if (s !== sentInput && ws && ws.readyState === 1) {
       ws.send(s);
       sentInput = s;
@@ -151,6 +201,8 @@
     ArrowLeft: 'l', KeyA: 'l',
     ArrowRight: 'r', KeyD: 'r',
     ArrowUp: 'j', KeyW: 'j', Space: 'j',
+    KeyZ: 'a', KeyJ: 'a', // こうげき
+    KeyX: 'b', KeyK: 'b', // ひっさつ(あとで使う)
   };
   window.addEventListener('keydown', (e) => {
     const k = KEYMAP[e.code];
@@ -167,7 +219,7 @@
     sendInput();
   });
   window.addEventListener('blur', () => {
-    input.l = input.r = input.j = 0;
+    input.l = input.r = input.j = input.a = input.b = 0;
     sendInput();
   });
 
@@ -230,6 +282,7 @@
   function updateCamera(dt) {
     let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
     for (const [slot, o] of players) {
+      if (o.l) continue; // 復活待ち・脱落の人は映さない
       const b = sizeOf(slot);
       minX = Math.min(minX, o.x - b.w / 2);
       maxX = Math.max(maxX, o.x + b.w / 2);
@@ -240,7 +293,7 @@
 
     const spanX = Math.max(maxX - minX + 700, 1000);
     const spanY = Math.max(maxY - minY + 500, 600);
-    const ts = Math.min(W / spanX, H / spanY);
+    const ts = Math.max(Math.min(W / spanX, H / spanY), Math.min(W / 3800, H / 2400));
     const tx = (minX + maxX) / 2;
     const ty = (minY + maxY) / 2 - 40;
 
@@ -296,6 +349,8 @@
     const w = a ? a.w : DEF.w;
     const h = a ? a.h : DEF.h;
 
+    ctx.save();
+    if (o.iv && Math.floor(performance.now() / 80) % 2) ctx.globalAlpha = 0.35; // 復活直後の無敵はチカチカ
     if (a) {
       // 描いた絵は右向き。左を向くときは左右を反転する
       const S = a.w / a.rig.w;
@@ -313,6 +368,7 @@
       ctx.fill();
       ctx.stroke();
     }
+    ctx.restore();
 
     // 名前
     ctx.font = '700 22px sans-serif';
@@ -350,7 +406,127 @@
 
     drawStage();
     const slots = [...players.keys()].sort((a, b) => a - b);
-    for (const slot of slots) drawPlayer(slot, players.get(slot));
+    for (const slot of slots) {
+      const o = players.get(slot);
+      if (!o.l) drawPlayer(slot, o);
+    }
+    drawHitEffects();
+
+    // ここから画面に固定して描く
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    drawKoEffects();
+    drawHud();
+  }
+
+  // ヒットのエフェクト(当たった場所に放射状の線)
+  function drawHitEffects() {
+    const now = performance.now();
+    for (const e of effects) {
+      if (e.k !== 'hit') continue;
+      const t = (now - e.t) / 280;
+      if (t < 0 || t > 1) continue;
+      ctx.save();
+      ctx.translate(e.x, e.y);
+      ctx.globalAlpha = 1 - t;
+      ctx.lineCap = 'round';
+      for (let k = 0; k < 8; k++) {
+        const ang = (k * Math.PI) / 4 + 0.4;
+        const r0 = 16 + t * 24;
+        const r1 = 40 + t * 56;
+        ctx.strokeStyle = INK;
+        ctx.lineWidth = 11;
+        ctx.beginPath();
+        ctx.moveTo(Math.cos(ang) * r0, Math.sin(ang) * r0);
+        ctx.lineTo(Math.cos(ang) * r1, Math.sin(ang) * r1);
+        ctx.stroke();
+        ctx.strokeStyle = '#fff';
+        ctx.lineWidth = 6;
+        ctx.stroke();
+      }
+      ctx.restore();
+    }
+  }
+
+  // 撃墜のエフェクト(画面のふちで、大きくはじける)
+  function drawKoEffects() {
+    const now = performance.now();
+    for (let i = effects.length - 1; i >= 0; i--) {
+      const e = effects[i];
+      const t = (now - e.t) / (e.k === 'ko' ? 800 : 280);
+      if (t > 1) { effects.splice(i, 1); continue; }
+      if (e.k !== 'ko' || t < 0) continue;
+      const sx = Math.max(40, Math.min(W - 40, W / 2 + (e.x - cam.x) * cam.s));
+      const sy = Math.max(40, Math.min(H - 40, H / 2 + (e.y - cam.y) * cam.s));
+      ctx.save();
+      ctx.translate(sx, sy);
+      ctx.globalAlpha = 1 - t * t;
+      ctx.lineCap = 'round';
+      for (let k = 0; k < 14; k++) {
+        const ang = (k * Math.PI * 2) / 14;
+        const r0 = 20 + t * 60;
+        const r1 = 60 + t * 190;
+        ctx.strokeStyle = INK;
+        ctx.lineWidth = 14 * (1 - t) + 4;
+        ctx.beginPath();
+        ctx.moveTo(Math.cos(ang) * r0, Math.sin(ang) * r0);
+        ctx.lineTo(Math.cos(ang) * r1, Math.sin(ang) * r1);
+        ctx.stroke();
+        ctx.strokeStyle = k % 2 ? '#f5c518' : '#e5322d';
+        ctx.lineWidth = 8 * (1 - t) + 2;
+        ctx.stroke();
+      }
+      ctx.restore();
+    }
+  }
+
+  // ダメージ(%)と残機の表示
+  function drawHud() {
+    const slots = [...players.keys()].sort((a, b) => a - b);
+    if (!slots.length) return;
+    const pw = 92, ph = 52, gap = 6;
+    let x = W - 10 - (slots.length * pw + (slots.length - 1) * gap);
+    const y = 10;
+    for (const s of slots) {
+      const o = players.get(s);
+      const out = o.l === 2;
+      ctx.fillStyle = out ? '#d5d5d5' : '#fff';
+      ctx.strokeStyle = INK;
+      ctx.lineWidth = 3;
+      roundRect(x, y, pw, ph, 10);
+      ctx.fill();
+      ctx.stroke();
+
+      ctx.fillStyle = SLOT_COLORS[s % 4];
+      ctx.beginPath();
+      ctx.arc(x + 12, y + 13, 6, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+
+      ctx.fillStyle = INK;
+      ctx.font = '700 13px sans-serif';
+      ctx.textAlign = 'left';
+      ctx.fillText('P' + (s + 1) + (s === me ? '(あなた)' : ''), x + 22, y + 18);
+
+      if (out) {
+        ctx.font = '700 22px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText('OUT', x + pw / 2, y + 44);
+      } else {
+        const d = Math.floor(o.d || 0);
+        ctx.fillStyle = d < 50 ? INK : d < 100 ? '#c2410c' : d < 150 ? '#dc2626' : '#991b1b';
+        ctx.font = '700 24px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText(d + '%', x + pw / 2, y + 44);
+        // 残機
+        ctx.fillStyle = INK;
+        for (let k = 0; k < (o.st || 0); k++) {
+          ctx.beginPath();
+          ctx.arc(x + pw - 12 - k * 13, y + 12, 4.5, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      }
+      x += pw + gap;
+    }
   }
 
   let last = performance.now();
@@ -363,7 +539,7 @@
       if (Math.abs(o.tx - o.x) > 300 || Math.abs(o.ty - o.y) > 300) { o.x = o.tx; o.y = o.ty; }
       o.x += (o.tx - o.x) * k;
       o.y += (o.ty - o.y) * k;
-      Rig.updatePose(o.pose, dt, { vx: o.vx, vy: o.vy, g: o.g, hang: o.h });
+      Rig.updatePose(o.pose, dt, { vx: o.vx, vy: o.vy, g: o.g, hang: o.h, hs: o.hs, at: o.at });
     }
 
     updateCamera(dt);
