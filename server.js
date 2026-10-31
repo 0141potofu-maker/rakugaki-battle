@@ -26,6 +26,12 @@ const PHYS = {
   airJump: 1004,
 };
 
+// 仮の通常攻撃(パンチ)。色ごとの技はあとのステップで入れ替える
+const ATK = { startup: 7, active: 7, total: 26, dmg: 7 };
+const STOCKS = 3;           // 残機
+const RESPAWN_FRAMES = 90;  // 撃墜されてから復活するまで(1.5秒)
+const INV_FRAMES = 150;     // 復活してからの無敵(2.5秒)
+
 // ---------- プレイヤー ----------
 function makePlayer(slot) {
   return {
@@ -34,10 +40,14 @@ function makePlayer(slot) {
     active: false, // 絵を出して、試合に参加している
     rig: null,     // 描いた絵(からだ+手足のパーツ)
     hb: [0, 0, 56, 84], // 食らい判定(からだだけ。手足はふくまない)
-    limbs: [],     // 手足の大きさ(あとで攻撃判定に使う)
+    limbs: [],     // 手足の大きさ(攻撃判定に使う)
     bw: 56, bh: 84, // キャラの大きさ(ゲーム内)
-    area: 0,        // 塗ったピクセル数(あとで体重・速度に使う)
+    area: 0,        // 塗ったピクセル数(体重・速さに使う)
     colors: [0, 0, 0, 0, 0], // 赤・青・黄・白・黒のピクセル数(あとで技に使う)
+    weight: 100,    // 体重(重いほど吹っ飛びにくい)
+    speedMul: 1,    // 移動の速さの倍率
+    gravMul: 1,     // 重力の倍率
+    atkR: 20,       // 攻撃判定の大きさ(手の大きさで決まる)
     x: 0, y: 0, vx: 0, vy: 0,
     f: 1,          // 向き 1=右 -1=左
     g: true,       // 接地
@@ -45,11 +55,43 @@ function makePlayer(slot) {
     prevJ: false,
     prevL: false,
     prevR: false,
+    prevA: false,
     hang: 0,   // 崖につかまり中: -1=左の崖 1=右の崖 0=なし
     hangT: 0,  // つかまっているフレーム数
     cd: 0,     // 崖につかまれるようになるまでのフレーム数
-    input: { l: 0, r: 0, j: 0 },
+    dmg: 0,    // 蓄積ダメージ(%)
+    stocks: STOCKS,
+    life: 0,   // 0=戦っている 1=復活待ち 2=脱落
+    respT: 0,  // 復活までのフレーム数
+    inv: 0,    // 無敵のフレーム数
+    stun: 0,   // のけぞりのフレーム数
+    atk: null, // 攻撃中の状態 {t, hit}
+    ko: false, // 撃墜されたばかり
+    vote: false, // 「もういちど」を押した
+    input: { l: 0, r: 0, j: 0, a: 0, b: 0 },
   };
+}
+
+// 面積から体重・速さ、手の大きさから攻撃判定の大きさを決める
+function applyBody(p) {
+  const lo = Math.log(400);
+  const hi = Math.log(40000);
+  const t = Math.max(0, Math.min(1, (Math.log(Math.max(p.area, 1)) - lo) / (hi - lo)));
+  p.weight = 70 + 70 * t;          // 70(軽い)〜140(重い)
+  p.speedMul = 1.35 - 0.65 * t;    // 1.35(速い)〜0.7(遅い)
+  p.gravMul = 0.92 + 0.2 * t;      // 重いほど速く落ちる
+  const hands = p.limbs.filter((l) => l.k === 'h').map((l) => l.a);
+  const big = hands.length ? Math.max(...hands) : 0;
+  p.atkR = big ? Math.max(18, Math.min(72, Math.sqrt(big / Math.PI) * SCALE * 1.4 + 12)) : 16;
+}
+
+function resetFighter(p) {
+  p.dmg = 0;
+  p.stocks = STOCKS;
+  p.life = 0;
+  p.respT = 0;
+  p.inv = 0;
+  p.vote = false;
 }
 
 function spawn(p, fromAir) {
@@ -62,11 +104,93 @@ function spawn(p, fromAir) {
   p.prevJ = false;
   p.prevL = false;
   p.prevR = false;
+  p.prevA = false;
   p.hang = 0;
   p.hangT = 0;
   p.cd = 0;
+  p.stun = 0;
+  p.atk = null;
+  p.ko = false;
 }
 
+function respawn(p) {
+  spawn(p, true);
+  p.dmg = 0;
+  p.inv = INV_FRAMES;
+  p.life = 0;
+}
+
+// 撃墜されたとき
+function koPlayer(r, p, events) {
+  p.ko = false;
+  events.push({
+    k: 'ko',
+    x: Math.max(-BLAST.x, Math.min(BLAST.x, p.x)),
+    y: Math.max(BLAST.top, Math.min(BLAST.bottom, p.y)),
+  });
+  if (r.versus) p.stocks--;
+  p.hang = 0;
+  p.atk = null;
+  p.stun = 0;
+  p.vx = 0;
+  p.vy = 0;
+  if (p.stocks > 0 || !r.versus) {
+    p.life = 1;
+    p.respT = RESPAWN_FRAMES;
+  } else {
+    p.life = 2; // 残機がなくなった
+  }
+}
+
+// ---------- 当たり判定 ----------
+// 食らい判定(からだだけ。手足はふくまない)。左向きのときは左右反転
+function hurtRect(p) {
+  const hx = p.hb[0], hy = p.hb[1], hw = p.hb[2], hh = p.hb[3];
+  const x0 = p.f >= 0 ? p.x - p.bw / 2 + hx : p.x + p.bw / 2 - hx - hw;
+  const y0 = p.y - p.bh + hy;
+  return { x0, y0, x1: x0 + hw, y1: y0 + hh };
+}
+
+function circleHitsRect(cx, cy, R, r) {
+  const nx = Math.max(r.x0, Math.min(cx, r.x1));
+  const ny = Math.max(r.y0, Math.min(cy, r.y1));
+  return (cx - nx) ** 2 + (cy - ny) ** 2 <= R * R;
+}
+
+// 攻撃が当たったとき: ダメージを増やして、吹っ飛ばす
+function applyHit(att, tgt, hx, hy, events) {
+  tgt.dmg = Math.min(999, tgt.dmg + ATK.dmg);
+  const kb = Math.min(1800, 320 + tgt.dmg * 11 * (100 / tgt.weight)); // ダメージが多いほど、軽いほど飛ぶ
+  const ang = Math.PI / 4; // 斜め上45度
+  tgt.vx = att.f * kb * Math.cos(ang);
+  tgt.vy = -kb * Math.sin(ang);
+  tgt.g = false;
+  tgt.hang = 0;
+  tgt.atk = null;
+  tgt.stun = Math.min(70, Math.floor(kb / 18));
+  events.push({ k: 'hit', x: +hx.toFixed(1), y: +hy.toFixed(1) });
+}
+
+function updateAttack(p, others, events) {
+  const a = p.atk;
+  if (!a) return;
+  a.t++;
+  if (a.t > ATK.startup && a.t <= ATK.startup + ATK.active) {
+    const R = p.atkR;
+    const cx = p.x + p.f * (p.bw / 2 + R * 0.4);
+    const cy = p.y - p.bh * 0.55;
+    for (const q of others) {
+      if (q === p || q.life !== 0 || q.inv > 0 || q.hang || a.hit.includes(q.slot)) continue;
+      if (circleHitsRect(cx, cy, R, hurtRect(q))) {
+        a.hit.push(q.slot);
+        applyHit(p, q, cx, cy, events);
+      }
+    }
+  }
+  if (p.atk && a.t >= ATK.total) p.atk = null;
+}
+
+// ---------- 動き ----------
 // 崖(ステージのかど)につかまっている間の動き
 function hangUpdate(p, pL, pR, pJ) {
   const s = p.hang; // -1=左の崖 1=右の崖
@@ -108,7 +232,7 @@ function hangUpdate(p, pL, pR, pJ) {
 
 // 崖につかまれるか調べる
 function tryGrab(p, occ) {
-  if (p.g || p.vy < 0 || p.cd > 0) return;
+  if (p.g || p.vy < 0 || p.cd > 0 || p.stun > 0) return;
   const s = p.x < 0 ? -1 : 1;
   if (p.f !== -s) return; // ステージのほうを向いているときだけ
   if (occ[s] !== undefined && occ[s] !== p.slot) return; // 先に誰かがつかまっている
@@ -119,43 +243,53 @@ function tryGrab(p, occ) {
   p.hang = s;
   p.hangT = 0;
   p.airJump = false; // つかまると空中ジャンプが回復
+  p.atk = null;
   p.vx = 0;
   p.vy = 0;
   occ[s] = p.slot;
 }
 
-function step(p, occ) {
+function step(p, occ, others, events) {
   const i = p.input;
   const pL = i.l && !p.prevL; // 押した瞬間
   const pR = i.r && !p.prevR;
   const pJ = i.j && !p.prevJ;
+  const pA = i.a && !p.prevA;
   p.prevL = !!i.l;
   p.prevR = !!i.r;
   p.prevJ = !!i.j;
+  p.prevA = !!i.a;
   if (p.cd > 0) p.cd--;
+  if (p.inv > 0) p.inv--;
 
   if (p.hang) {
     hangUpdate(p, pL, pR, pJ);
     return;
   }
 
-  const dir = (i.r ? 1 : 0) - (i.l ? 1 : 0);
+  const stunned = p.stun > 0;
+  if (stunned) p.stun--;
 
-  // 左右移動
+  // 攻撃(のけぞり中はできない)
+  if (!stunned && pA && !p.atk) p.atk = { t: 0, hit: [] };
+
+  // 左右移動(地上で攻撃中・のけぞり中は動けない)
+  const dir = stunned || (p.atk && p.g) ? 0 : (i.r ? 1 : 0) - (i.l ? 1 : 0);
+  const maxRun = PHYS.run * p.speedMul;
   if (dir) {
-    p.f = dir;
+    if (!p.atk) p.f = dir;
     const acc = p.g ? PHYS.groundAcc : PHYS.airAcc;
-    const target = dir * PHYS.run;
+    const target = dir * maxRun;
     if (p.vx < target) p.vx = Math.min(target, p.vx + acc * DT);
     else p.vx = Math.max(target, p.vx - acc * DT);
   } else {
-    const fr = p.g ? PHYS.groundFric : PHYS.airFric;
+    const fr = p.g ? PHYS.groundFric : stunned ? 220 : PHYS.airFric;
     if (p.vx > 0) p.vx = Math.max(0, p.vx - fr * DT);
     else p.vx = Math.min(0, p.vx + fr * DT);
   }
 
   // ジャンプ(押した瞬間だけ)
-  if (pJ) {
+  if (!stunned && pJ) {
     if (p.g) {
       p.vy = -PHYS.jump;
       p.g = false;
@@ -167,7 +301,7 @@ function step(p, occ) {
 
   // 移動
   const prevY = p.y;
-  if (!p.g) p.vy = Math.min(PHYS.maxFall, p.vy + PHYS.gravity * DT);
+  if (!p.g) p.vy = Math.min(PHYS.maxFall, p.vy + PHYS.gravity * p.gravMul * DT);
   p.x += p.vx * DT;
   p.y += p.vy * DT;
 
@@ -188,13 +322,11 @@ function step(p, occ) {
     p.vx = 0;
   }
 
-  // 崖つかまり
-  tryGrab(p, occ);
+  tryGrab(p, occ);        // 崖つかまり
+  updateAttack(p, others, events);
 
-  // 撃墜(今は即復活。ダメージ・ストックは後のステップで)
-  if (Math.abs(p.x) > BLAST.x || p.y > BLAST.bottom || p.y < BLAST.top) {
-    spawn(p, true);
-  }
+  // 画面外に出たら撃墜
+  if (Math.abs(p.x) > BLAST.x || p.y > BLAST.bottom || p.y < BLAST.top) p.ko = true;
 }
 
 // ---------- 部屋 ----------
@@ -215,7 +347,7 @@ function rosterMsg(r) {
   return {
     t: 'roster',
     phase: r.phase,
-    p: [...r.players.values()].map((p) => ({ s: p.slot, r: p.active ? 1 : 0 })),
+    p: [...r.players.values()].map((p) => ({ s: p.slot, r: p.active ? 1 : 0, v: p.vote ? 1 : 0 })),
   };
 }
 
@@ -227,7 +359,38 @@ function allReady(r) {
 
 function startMatch(r) {
   r.phase = 'play';
-  for (const p of r.players.values()) spawn(p, false);
+  r.versus = r.players.size >= 2;
+  r.events = [];
+  r.tick = 0;
+  for (const p of r.players.values()) {
+    resetFighter(p);
+    spawn(p, false);
+  }
+  broadcast(r, rosterMsg(r));
+}
+
+// 試合終了。winner は勝った人の番号(ひきわけは -1)
+function endMatch(r, winner) {
+  r.phase = 'result';
+  for (const p of r.players.values()) p.vote = false;
+  broadcast(r, { t: 'result', w: winner });
+  broadcast(r, rosterMsg(r));
+}
+
+// 全員が「もういちど」を押したら、同じキャラでもう一度
+function checkRematch(r) {
+  if (r.phase !== 'result') return;
+  const act = [...r.players.values()].filter((p) => p.active);
+  if (act.length === 0 || !act.every((p) => p.vote)) return;
+  r.versus = act.length >= 2;
+  r.events = [];
+  r.tick = 0;
+  for (const p of act) {
+    resetFighter(p);
+    spawn(p, false);
+    p.inv = 60;
+  }
+  r.phase = 'play';
   broadcast(r, rosterMsg(r));
 }
 
@@ -290,7 +453,7 @@ wss.on('connection', (ws) => {
 
       let r = rooms.get(id);
       if (!r) {
-        r = { id, players: new Map(), tick: 0, phase: 'draw' };
+        r = { id, players: new Map(), tick: 0, phase: 'draw', versus: false, events: [] };
         rooms.set(id, r);
       }
       let slot = -1;
@@ -316,13 +479,13 @@ wss.on('connection', (ws) => {
       return;
 
     } else if (m.t === 'input') {
-      player.input = { l: m.l ? 1 : 0, r: m.r ? 1 : 0, j: m.j ? 1 : 0 };
+      player.input = { l: m.l ? 1 : 0, r: m.r ? 1 : 0, j: m.j ? 1 : 0, a: m.a ? 1 : 0, b: m.b ? 1 : 0 };
 
     } else if (m.t === 'art') {
       // 描いた絵を受け取る
       const rig = cleanRig(m.rig);
       if (!rig) return;
-      if (room.phase === 'play' && player.active) return;
+      if (room.phase !== 'draw' && player.active) return;
 
       player.rig = rig;
       player.bw = rig.w * SCALE;
@@ -331,6 +494,8 @@ wss.on('connection', (ws) => {
       player.limbs = rig.parts.map((p) => ({ k: p.k, a: p.a }));
       player.area = clampInt(m.area, 65536);
       player.colors = Array.isArray(m.c) && m.c.length === 5 ? m.c.map((v) => clampInt(v, 65536)) : [0, 0, 0, 0, 0];
+      applyBody(player);
+      resetFighter(player);
       player.active = true;
       spawn(player, false);
 
@@ -352,14 +517,26 @@ wss.on('connection', (ws) => {
     } else if (m.t === 'start') {
       // 全員かけたら「はじめる」で試合開始
       if (room.phase === 'draw' && allReady(room)) startMatch(room);
+
+    } else if (m.t === 'rematch') {
+      // 試合のあと「もういちど」
+      if (room.phase === 'result' && player.active) {
+        player.vote = true;
+        checkRematch(room);
+        if (room.phase === 'result') broadcast(room, rosterMsg(room));
+      }
     }
   });
 
   ws.on('close', () => {
     if (room && player) {
       room.players.delete(player.slot);
-      if (room.players.size === 0) rooms.delete(room.id);
-      else broadcast(room, rosterMsg(room));
+      if (room.players.size === 0) {
+        rooms.delete(room.id);
+      } else {
+        checkRematch(room);
+        broadcast(room, rosterMsg(room));
+      }
     }
   });
 });
@@ -376,15 +553,36 @@ setInterval(() => {
   for (const r of rooms.values()) {
     if (r.phase !== 'play') continue;
     r.tick++;
-    const actives = [...r.players.values()].filter((p) => p.active);
-    const occ = {}; // 崖ごとに、つかまっている人
-    for (const p of actives) if (p.hang) occ[p.hang] = p.slot;
-    for (const p of actives) step(p, occ);
 
-    if (r.tick % SEND_EVERY === 0) {
-      broadcast(r, {
+    const present = [...r.players.values()].filter((p) => p.active);
+    if (present.length >= 2) r.versus = true;
+
+    // 復活
+    for (const p of present) {
+      if (p.life === 1 && --p.respT <= 0) respawn(p);
+    }
+
+    // 戦っている人を動かす
+    const alive = present.filter((p) => p.life === 0);
+    const occ = {}; // 崖ごとに、つかまっている人
+    for (const p of alive) if (p.hang) occ[p.hang] = p.slot;
+    for (const p of alive) step(p, occ, alive, r.events);
+    for (const p of alive) if (p.ko) koPlayer(r, p, r.events);
+
+    // 勝敗(対戦のとき、残機が残っている人が1人以下になったら終わり)
+    let ended = false;
+    if (r.versus) {
+      const holders = present.filter((p) => p.stocks > 0);
+      if (holders.length <= 1) {
+        endMatch(r, holders.length ? holders[0].slot : -1);
+        ended = true;
+      }
+    }
+
+    if (r.tick % SEND_EVERY === 0 || ended) {
+      const msg = {
         t: 'state',
-        p: actives.map((p) => ({
+        p: present.map((p) => ({
           s: p.slot,
           x: +p.x.toFixed(1),
           y: +p.y.toFixed(1),
@@ -393,8 +591,19 @@ setInterval(() => {
           h: p.hang ? 1 : 0,
           vx: Math.round(p.vx),
           vy: Math.round(p.vy),
+          d: p.dmg,
+          st: p.stocks,
+          l: p.life,
+          iv: p.inv > 0 ? 1 : 0,
+          hs: p.stun > 0 ? 1 : 0,
+          at: p.atk ? p.atk.t : 0,
         })),
-      });
+      };
+      if (r.events.length) {
+        msg.ev = r.events;
+        r.events = [];
+      }
+      broadcast(r, msg);
     }
   }
 }, 1000 / TICK);
