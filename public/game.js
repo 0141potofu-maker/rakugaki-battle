@@ -261,11 +261,17 @@
   // ---------- 描画 ----------
   const cv = $('cv');
   const ctx = cv.getContext('2d');
-  let W = 0, H = 0, dpr = 1;
+  let W = 0, H = 0, dpr = 1, safeB = 0;
+  // 画面の下の安全な余白(iPhoneなど)を調べるための、見えない部品
+  const probe = document.createElement('div');
+  probe.style.cssText = 'position:fixed;left:0;bottom:0;width:0;height:0;visibility:hidden;padding-bottom:env(safe-area-inset-bottom,0px)';
+  document.body.appendChild(probe);
+  const coarse = window.matchMedia('(pointer: coarse)'); // スマホ・タブレットかどうか
   function resize() {
     dpr = Math.min(window.devicePixelRatio || 1, 2);
     W = window.innerWidth;
     H = window.innerHeight;
+    safeB = parseFloat(getComputedStyle(probe).paddingBottom) || 0;
     cv.width = Math.round(W * dpr);
     cv.height = Math.round(H * dpr);
   }
@@ -484,12 +490,20 @@
     const slots = [...players.keys()].sort((a, b) => a - b);
     if (!slots.length) return;
     const pw = 92, ph = 52, gap = 6;
-    let x = W - 10 - (slots.length * pw + (slots.length - 1) * gap);
-    const y = 10;
+    const total = slots.length * pw + (slots.length - 1) * gap;
+    let x = (W - total) / 2;
+    let y;
+    if (coarse.matches) {
+      // スマホ・タブレット: 操作ボタンのあいだにおさまれば下、せまければボタンの上
+      const roomW = W - 200 - 290;
+      y = total + 16 <= roomW ? H - ph - 14 - safeB : H - (18 + safeB + 98) - ph - 8;
+    } else {
+      y = H - ph - 40; // PC: 画面下の操作説明の上
+    }
     for (const s of slots) {
       const o = players.get(s);
       const out = o.l === 2;
-      ctx.fillStyle = out ? '#d5d5d5' : '#fff';
+      ctx.fillStyle = out ? '#d5d5d5' : s === me ? '#fff3bf' : '#fff'; // 自分のパネルはうす黄色
       ctx.strokeStyle = INK;
       ctx.lineWidth = 3;
       roundRect(x, y, pw, ph, 10);
@@ -505,7 +519,7 @@
       ctx.fillStyle = INK;
       ctx.font = '700 13px sans-serif';
       ctx.textAlign = 'left';
-      ctx.fillText('P' + (s + 1) + (s === me ? '(あなた)' : ''), x + 22, y + 18);
+      ctx.fillText('P' + (s + 1), x + 22, y + 18);
 
       if (out) {
         ctx.font = '700 22px sans-serif';
