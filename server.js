@@ -32,7 +32,9 @@ function makePlayer(slot) {
     slot,
     ws: null,
     active: false, // 絵を出して、試合に参加している
-    art: null,     // 描いた絵(PNGのdataURL)
+    rig: null,     // 描いた絵(からだ+手足のパーツ)
+    hb: [0, 0, 56, 84], // 食らい判定(からだだけ。手足はふくまない)
+    limbs: [],     // 手足の大きさ(あとで攻撃判定に使う)
     bw: 56, bh: 84, // キャラの大きさ(ゲーム内)
     area: 0,        // 塗ったピクセル数(あとで体重・速度に使う)
     colors: [0, 0, 0, 0, 0], // 赤・青・黄・白・黒のピクセル数(あとで技に使う)
@@ -230,7 +232,36 @@ function startMatch(r) {
 }
 
 function artMsg(p) {
-  return { t: 'art', s: p.slot, img: p.art, w: p.bw, h: p.bh };
+  return { t: 'art', s: p.slot, rig: p.rig, w: p.bw, h: p.bh };
+}
+
+// 届いた絵のデータを確認して、安全な形にそろえる
+function cleanRig(r) {
+  if (!r || typeof r !== 'object') return null;
+  const w = Math.round(+r.w);
+  const h = Math.round(+r.h);
+  if (!(w >= 4 && w <= 256 && h >= 4 && h <= 256)) return null;
+  const okImg = (v) => typeof v === 'string' && v.startsWith('data:image/png;base64,') && v.length <= 200000;
+  if (!okImg(r.body)) return null;
+  if (!Array.isArray(r.parts) || r.parts.length > 8) return null;
+  const num = (v, max) => Math.max(0, Math.min(max, +v || 0));
+  const parts = [];
+  for (const p of r.parts) {
+    if (!p || (p.k !== 'h' && p.k !== 'f') || !okImg(p.img)) return null;
+    parts.push({
+      k: p.k,
+      i: Math.max(0, Math.min(7, Math.floor(+p.i) || 0)),
+      img: p.img,
+      x: num(p.x, 256), y: num(p.y, 256), w: num(p.w, 256), h: num(p.h, 256),
+      px: num(p.px, 256), py: num(p.py, 256),
+      a: Math.floor(num(p.a, 65536)),
+      d0: Math.max(-7, Math.min(7, +p.d0 || 0)),
+    });
+  }
+  const hb = Array.isArray(r.hb) && r.hb.length === 4 ? r.hb.map((v) => num(v, 256)) : [0, 0, w, h];
+  const rig = { w, h, body: r.body, hb, parts };
+  if (JSON.stringify(rig).length > 500000) return null;
+  return rig;
 }
 
 const app = express();
@@ -277,7 +308,7 @@ wss.on('connection', (ws) => {
 
       send(ws, { t: 'welcome', you: slot, room: id, stage: STAGE, phase: r.phase });
       for (const q of r.players.values()) {
-        if (q.active && q.art) send(ws, artMsg(q));
+        if (q.active && q.rig) send(ws, artMsg(q));
       }
       broadcast(r, rosterMsg(r));
 
@@ -289,16 +320,15 @@ wss.on('connection', (ws) => {
 
     } else if (m.t === 'art') {
       // 描いた絵を受け取る
-      const w = Math.round(+m.w);
-      const h = Math.round(+m.h);
-      const img = m.img;
-      if (!(w >= 4 && w <= 256 && h >= 4 && h <= 256)) return;
-      if (typeof img !== 'string' || !img.startsWith('data:image/png;base64,') || img.length > 400000) return;
+      const rig = cleanRig(m.rig);
+      if (!rig) return;
       if (room.phase === 'play' && player.active) return;
 
-      player.art = img;
-      player.bw = w * SCALE;
-      player.bh = h * SCALE;
+      player.rig = rig;
+      player.bw = rig.w * SCALE;
+      player.bh = rig.h * SCALE;
+      player.hb = rig.hb.map((v) => v * SCALE);
+      player.limbs = rig.parts.map((p) => ({ k: p.k, a: p.a }));
       player.area = clampInt(m.area, 65536);
       player.colors = Array.isArray(m.c) && m.c.length === 5 ? m.c.map((v) => clampInt(v, 65536)) : [0, 0, 0, 0, 0];
       player.active = true;
@@ -315,7 +345,7 @@ wss.on('connection', (ws) => {
       // 試合が始まる前なら、描き直せる
       if (room.phase === 'draw' && player.active) {
         player.active = false;
-        player.art = null;
+        player.rig = null;
         broadcast(room, rosterMsg(room));
       }
 
@@ -361,6 +391,8 @@ setInterval(() => {
           f: p.f,
           g: p.g ? 1 : 0,
           h: p.hang ? 1 : 0,
+          vx: Math.round(p.vx),
+          vy: Math.round(p.vy),
         })),
       });
     }
