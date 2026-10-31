@@ -3,7 +3,6 @@
   const MIN_PART = 6;      // これより小さいえらびは手足にしない(からだにもどす)
   const MAX_PER_TYPE = 4;  // 手・足それぞれ、最大4つまで
   const MIN_BODY = 12;     // からだに最低限必要なピクセル数
-  const ATK_TOTAL = 26;    // 攻撃全体のフレーム数(サーバーと同じ)
 
   // 手足をえらんだマスク(0=なし 1=手 2=足)から、からだと手足のパーツに分ける
   function build(crop, mask) {
@@ -182,7 +181,7 @@
 
   // ---------- 動き ----------
   function newPose() {
-    return { phase: 0, walk: 0, air: 0, hang: 0, vy: 0, t: 0, atk: 0, hurt: 0 };
+    return { phase: 0, walk: 0, air: 0, hang: 0, vy: 0, t: 0, atk: 0, hurt: 0, ms: '' };
   }
 
   // 速さ・空中・崖つかまりの状態から、動きのなめらかな度合いを更新する
@@ -198,10 +197,11 @@
     if (moving) p.phase += dt * (6 + 8 * sp);
     // やられたとき(のけぞり)
     p.hurt += ((s.hs ? 1 : 0) - p.hurt) * (1 - Math.exp(-dt * 25));
-    // 攻撃中(0〜1で進みぐあいを表す。サーバーのフレーム数と合わせる)
-    if (s.at > 0) {
-      const target = Math.min(1, s.at / ATK_TOTAL);
-      p.atk = p.atk > 0 ? Math.max(Math.min(1, p.atk + (dt * 60) / ATK_TOTAL), target) : target;
+    // 技を出している間(0〜1で進みぐあいを表す。msは動きの名前)
+    p.ms = s.ms || '';
+    if (s.at > 0 && s.tt > 0) {
+      const target = Math.min(1, s.at / s.tt);
+      p.atk = p.atk > 0 ? Math.max(Math.min(1, p.atk + (dt * 60) / s.tt), target) : target;
     } else {
       p.atk = 0;
     }
@@ -228,7 +228,7 @@
   function clamp(v, m) { return Math.max(-m, Math.min(m, v)); }
 
   // 手足の角度(ラジアン)
-  function angle(part, pose, fh) {
+  function angle(part, pose, fh, ff) {
     const hand = part.k === 'h';
     const idx = part.i || 0;
     const idle = Math.sin(pose.t * 2.2 + idx * 1.7) * (hand ? 0.07 : 0.03);
@@ -244,10 +244,8 @@
       const hangA = hand ? clamp(delta(part.d0, -Math.PI / 2), 1.6) * 0.95 : 0;
       a = a * (1 - pose.hang) + hangA * pose.hang;
     }
-    // 攻撃: いちばん前(右)の手が、前につき出される
-    if (pose.atk > 0 && hand && idx === fh) {
-      a = clamp(delta(part.d0, 0), 1.6) * punchK(pose.atk);
-    }
+    // 技のポーズ
+    if (pose.atk > 0 && pose.ms) a = atkAngle(part, pose, fh, ff, a);
     // のけぞり: 手足をバタバタさせる
     if (pose.hurt > 0.001) {
       a = a * (1 - pose.hurt) + Math.sin(pose.t * 25 + idx * 2.1) * 0.9 * pose.hurt;
@@ -255,20 +253,81 @@
     return a;
   }
 
+  // 技ごとの、手足の角度。fh=いちばん前(右)の手の番号、ff=いちばん前の足の番号
+  function atkAngle(part, pose, fh, ff, a) {
+    const st = pose.ms;
+    const pr = pose.atk;
+    const idx = part.i || 0;
+    if (part.k === 'h') {
+      const front = idx === fh;
+      switch (st) {
+        case 'punch': case 'shoot':
+          if (front) return clamp(delta(part.d0, 0), 1.6) * punchK(pr);
+          break;
+        case 'upper':
+          if (front) return clamp(delta(part.d0, -Math.PI / 2), 2.4) * punchK(pr);
+          break;
+        case 'rapid':
+          if (front) return clamp(delta(part.d0, 0), 1.6) * punchK((pr * 5) % 1);
+          break;
+        case 'up': case 'rise':
+          return clamp(delta(part.d0, -Math.PI / 2), 1.8) * 0.9;
+        case 'kickdown': case 'shootdown':
+          return clamp(delta(part.d0, Math.PI / 2), 1.8) * 0.8;
+        case 'dash': case 'dive':
+          return clamp(delta(part.d0, Math.PI), 1.6) * 0.8;
+        case 'spin':
+          return clamp(delta(part.d0, 0), 1.6) * 0.8;
+        case 'charge':
+          return clamp(delta(part.d0, Math.PI / 2), 1.2) * 0.4;
+      }
+    } else {
+      const front = idx === ff;
+      switch (st) {
+        case 'kick':
+          if (front) return clamp(delta(part.d0, 0), 1.5) * punchK(pr);
+          break;
+        case 'kickdown':
+          if (front) return clamp(delta(part.d0, Math.PI / 2), 1.5) * 0.9;
+          break;
+        case 'dash': case 'dive':
+          return clamp(delta(part.d0, Math.PI), 1.2) * 0.5;
+        case 'shootdown':
+          return 0.6 * (idx % 2 ? 1 : -1);
+      }
+    }
+    return a;
+  }
+
+  // 技のとき、手足が根もとから先へのびる長さ
+  function partExt(part, pose, fh, ff) {
+    if (!(pose.atk > 0)) return 0;
+    const st = pose.ms;
+    const pr = pose.atk;
+    const idx = part.i || 0;
+    const len = Math.max(part.w, part.h);
+    if (part.k === 'h' && idx === fh) {
+      if (st === 'punch' || st === 'shoot' || st === 'upper') return len * 0.5 * punchExt(pr);
+      if (st === 'rapid') return len * 0.5 * punchExt((pr * 5) % 1);
+    }
+    if (part.k === 'f' && idx === ff) {
+      if (st === 'kick') return len * 0.5 * punchExt(pr);
+      if (st === 'kickdown') return len * 0.3;
+    }
+    return 0;
+  }
+
   function ready(img) {
     return img instanceof HTMLCanvasElement || (img.complete && img.naturalWidth > 0);
   }
 
-  function drawPart(ctx, p, pose, fh) {
+  function drawPart(ctx, p, pose, fh, ff) {
     if (!ready(p.img)) return;
     ctx.save();
     ctx.translate(p.x + p.px, p.y + p.py);
-    ctx.rotate(angle(p, pose, fh));
-    if (pose.atk > 0 && p.k === 'h' && p.i === fh) {
-      // パンチのとき、手がつけ根から先へのびる
-      const ext = Math.max(p.w, p.h) * 0.5 * punchExt(pose.atk);
-      ctx.translate(Math.cos(p.d0) * ext, Math.sin(p.d0) * ext);
-    }
+    ctx.rotate(angle(p, pose, fh, ff));
+    const ext = partExt(p, pose, fh, ff);
+    if (ext) ctx.translate(Math.cos(p.d0) * ext, Math.sin(p.d0) * ext);
     ctx.drawImage(p.img, -p.px, -p.py);
     ctx.restore();
   }
@@ -276,14 +335,31 @@
   // 絵の左上を原点として描く(呼び出し側で位置・拡大・左右反転をすませておく)
   function draw(ctx, rig, pose) {
     const bob = -Math.abs(Math.sin(pose.phase)) * 2.5 * pose.walk * (1 - pose.air);
-    const lunge = pose.atk > 0 ? Math.sin(Math.min(1, pose.atk) * Math.PI) * 5 : 0; // 攻撃で少し前へ
+    const st = pose.atk > 0 ? pose.ms : '';
+    const lunge = st === 'punch' || st === 'upper' || st === 'rapid' || st === 'kick' ? Math.sin(Math.min(1, pose.atk) * Math.PI) * 5 : 0; // 攻撃で少し前へ
     let fh = -1; // いちばん前(右)の手の番号
-    for (const p of rig.parts) if (p.k === 'h' && p.i > fh) fh = p.i;
+    let ff = -1; // いちばん前(右)の足の番号
+    for (const p of rig.parts) {
+      if (p.k === 'h' && p.i > fh) fh = p.i;
+      if (p.k === 'f' && p.i > ff) ff = p.i;
+    }
     ctx.save();
     ctx.translate(lunge, bob);
-    for (const p of rig.parts) if (p.k === 'f') drawPart(ctx, p, pose, fh);
+    // からだ全体の動き(回転・前かがみ・溜めのふるえ)
+    const cx = rig.w / 2;
+    const cy = rig.h / 2;
+    if (st === 'spin') {
+      ctx.translate(cx, cy); ctx.rotate(pose.atk * Math.PI * 4); ctx.translate(-cx, -cy);
+    } else if (st === 'dash') {
+      ctx.translate(cx, cy); ctx.rotate(0.35); ctx.translate(-cx, -cy);
+    } else if (st === 'dive') {
+      ctx.translate(cx, cy); ctx.rotate(1.1); ctx.translate(-cx, -cy);
+    } else if (st === 'charge') {
+      ctx.translate(cx + Math.sin(pose.t * 70) * 2, rig.h); ctx.scale(1.03, 0.94); ctx.translate(-cx, -rig.h);
+    }
+    for (const p of rig.parts) if (p.k === 'f') drawPart(ctx, p, pose, fh, ff);
     if (ready(rig.body)) ctx.drawImage(rig.body, 0, 0);
-    for (const p of rig.parts) if (p.k === 'h') drawPart(ctx, p, pose, fh);
+    for (const p of rig.parts) if (p.k === 'h') drawPart(ctx, p, pose, fh, ff);
     ctx.restore();
   }
 
