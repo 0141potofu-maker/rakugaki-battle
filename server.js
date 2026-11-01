@@ -389,10 +389,10 @@ const MOVES = {
       }
     },
   },
-  // 必殺・空中: 向いている方向の斜め上に、高速で突進
+  // 必殺・空中: 向いている方向の斜め上に、高速で突進(距離は元の1.75倍)
   ysa: melee({
     style: 'dash', total: 36, lockJump: true, startup: 6, active: 16, r: 'hf',
-    ctl: (p, t) => (t <= 6 ? { vx: 0, vy: 0 } : t <= 22 ? { vx: p.f * 620, vy: -620 } : null),
+    ctl: (p, t) => (t <= 6 ? { vx: 0, vy: 0 } : t <= 22 ? { vx: p.f * 1085, vy: -1085 } : null),
     shape: (p, R) => circ(p.x + p.f * p.bw * 0.25, p.y - p.bh * 0.5, R * 0.9 + p.bh * 0.25),
     hit: H(9, 320, 10, 45),
     post: (p, t) => { if (t === 23) { p.vx *= 0.4; p.vy *= 0.4; } },
@@ -462,16 +462,16 @@ const MOVES = {
       }
     },
   },
-  // 必殺・空中: 溜めて横に突進(約1秒溜める)
+  // 必殺・空中: 溜めて横に突進(約0.7秒溜める。突進の距離は元の1.75倍)
   ksa: {
-    style: 'dash', chargeT: 60, total: 90, lockJump: true,
-    ctl: (p, t) => (t <= 60 ? { vx: 0, vy: 100 } : t <= 76 ? { vx: p.f * 1000, vy: 0 } : null),
+    style: 'dash', chargeT: 42, total: 76, lockJump: true,
+    ctl: (p, t) => (t <= 42 ? { vx: 0, vy: 100 } : t <= 62 ? { vx: p.f * 1400, vy: 0 } : null),
     act(p, t, fx) {
-      if (inWin(t, 60, 16)) {
+      if (inWin(t, 42, 20)) {
         const R = pickR(p, 'hf');
         fx.hit('a', circ(p.x + p.f * p.bw * 0.25, p.y - p.bh * 0.5, R + p.bh * 0.3), H(16, 420, 14, 35));
       }
-      if (t === 77) p.vx *= 0.3;
+      if (t === 63) p.vx *= 0.3;
     },
   },
 };
