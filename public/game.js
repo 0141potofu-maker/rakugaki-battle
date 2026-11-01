@@ -1,6 +1,18 @@
 (() => {
   const $ = (id) => document.getElementById(id);
 
+  // ---------- ブラウザの拡大をふせぐ(ダブルタップ・ピンチ) ----------
+  ['gesturestart', 'gesturechange', 'gestureend'].forEach((n) => document.addEventListener(n, (e) => e.preventDefault()));
+  document.addEventListener('dblclick', (e) => e.preventDefault());
+  let lastTouchEnd = 0;
+  document.addEventListener('touchend', (e) => {
+    const now = Date.now();
+    // すばやい2回目のタップを、ブラウザに渡さない(お絵描き画面と結果画面のボタンは、いつも通り使える)
+    if (now - lastTouchEnd < 400 && !DrawPad.isOpen() && !(e.target.closest && e.target.closest('#rs'))) e.preventDefault();
+    lastTouchEnd = now;
+  }, { passive: false });
+  // 指2本でのピンチ拡大をふせぐ
+  document.addEventListener('touchmove', (e) => { if (e.touches.length > 1) e.preventDefault(); }, { passive: false });
   // ---------- ホーム画面 ----------
   const match = location.pathname.match(/^\/r\/([a-z0-9]{3,12})$/i);
   if (!match) {
