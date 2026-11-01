@@ -13,7 +13,7 @@ const MAX_PLAYERS = 4;
 const SCALE = 0.8; // 描いた絵の1ピクセル = ゲーム内の0.8
 
 const STAGE = { w: 1800, top: 0, depth: 300, wall: 180 }; // 終点風。上面が y=0、wallは垂直な側面の高さ
-const BLAST = { x: 1500, top: -1200, bottom: 900 }; // これを超えたら撃墜
+const BLAST = { x: 1900, top: -1500, bottom: 1100 }; // これを超えたら撃墜
 const PHYS = {
   run: 430,
   groundAcc: 3200,
@@ -291,7 +291,7 @@ function rise(ground) {
         fx.hit('m' + t, circ(p.x + p.f * p.bw * 0.2, p.y - p.bh * 0.55, R * 0.9 + p.bh * 0.25), JAB, { carry: { vx: 0, vy: -540 } });
       }
       if (t >= 45 && t <= 52) {
-        fx.hit('fin', circ(p.x + p.f * R * 0.2, p.y - p.bh * 0.4, R * 1.2 + p.bh * 0.45), ground ? H(5, 420, 12, 70) : H(2, 250, 6, 80), { away: true });
+        fx.hit('fin', circ(p.x + p.f * R * 0.2, p.y - p.bh * 0.4, R * 1.2 + p.bh * 0.45), ground ? H(5, 500, 14, 70) : H(2, 250, 6, 80), { away: true });
       }
     },
   };
@@ -349,7 +349,7 @@ const MOVES = {
   // 必殺・空中: 水の弾を下に飛ばして、その反動で上昇
   bsa: {
     style: 'shootdown', total: 40, lockJump: true,
-    ctl: (p, t) => (t >= 8 && t <= 11 ? { vy: -780 } : null),
+    ctl: (p, t) => (t >= 8 && t <= 11 ? { vy: -1080 } : null),
     act(p, t, fx) {
       if (t === 8) {
         const R = pickR(p, 'h');
