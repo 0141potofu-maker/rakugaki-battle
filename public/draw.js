@@ -7,6 +7,9 @@
     { name: '黄', css: '#f5c518', rgb: [245, 197, 24] },
     { name: '白', css: '#ffffff', rgb: [255, 255, 255] },
     { name: '黒', css: '#151515', rgb: [21, 21, 21] },
+    { name: '灰', css: '#8d939c', rgb: [141, 147, 156] },
+    { name: '橙', css: '#f28a1d', rgb: [242, 138, 29] },
+    { name: '水', css: '#4fc3f7', rgb: [79, 195, 247] },
   ];
   const SIZES = [6, 14, 28];
   const SLOT_COLORS = ['#e5322d', '#2563e8', '#f5c518', '#ffffff'];
@@ -164,7 +167,7 @@
     return best;
   }
 
-  // 線のふちのぼかしをなくして、すべて「5色のどれか」か「透明」にそろえる
+  // 線のふちのぼかしをなくして、すべて「ペンの色のどれか」か「透明」にそろえる
   function harden() {
     const id = ctx.getImageData(0, 0, SIZE, SIZE);
     const d = id.data;
@@ -211,7 +214,7 @@
   function analyze() {
     const d = ctx.getImageData(0, 0, SIZE, SIZE).data;
     let minX = SIZE, minY = SIZE, maxX = -1, maxY = -1, area = 0;
-    const counts = [0, 0, 0, 0, 0];
+    const counts = new Array(PALETTE.length).fill(0);
     for (let y = 0; y < SIZE; y++) {
       for (let x = 0; x < SIZE; x++) {
         const i = (y * SIZE + x) * 4;
@@ -235,6 +238,14 @@
   }
 
   // ---------- 描く ----------
+  // 線は、いったん別の紙(strokeCv)に描いて、ふちのぼかしをなくしてから絵に重ねる
+  // (色のちがう線が重なるところに、まざった色のふちができないようにするため)
+  const strokeCv = document.createElement('canvas');
+  strokeCv.width = SIZE;
+  strokeCv.height = SIZE;
+  const sctx = strokeCv.getContext('2d', { willReadFrequently: true });
+  let base = null; // 描きはじめる前の絵
+
   let drawing = false;
   let pid = null;
   let last = null;
@@ -244,27 +255,34 @@
     return { x: ((e.clientX - r.left) * SIZE) / r.width, y: ((e.clientY - r.top) * SIZE) / r.height };
   }
 
-  function setBrush() {
-    ctx.globalCompositeOperation = tool === 'eraser' ? 'destination-out' : 'source-over';
-    ctx.strokeStyle = ctx.fillStyle = PALETTE[colorIdx].css;
-    ctx.lineWidth = SIZES[sizeIdx];
-    ctx.lineCap = 'round';
-    ctx.lineJoin = 'round';
+  function brushCss() {
+    return tool === 'eraser' ? '#000000' : PALETTE[colorIdx].css;
   }
 
   function dot(p) {
-    setBrush();
-    ctx.beginPath();
-    ctx.arc(p.x, p.y, SIZES[sizeIdx] / 2, 0, Math.PI * 2);
-    ctx.fill();
+    sctx.fillStyle = brushCss();
+    sctx.beginPath();
+    sctx.arc(p.x, p.y, SIZES[sizeIdx] / 2, 0, Math.PI * 2);
+    sctx.fill();
   }
 
   function line(a, b) {
-    setBrush();
-    ctx.beginPath();
-    ctx.moveTo(a.x, a.y);
-    ctx.lineTo(b.x, b.y);
-    ctx.stroke();
+    sctx.strokeStyle = brushCss();
+    sctx.lineWidth = SIZES[sizeIdx];
+    sctx.lineCap = 'round';
+    sctx.lineJoin = 'round';
+    sctx.beginPath();
+    sctx.moveTo(a.x, a.y);
+    sctx.lineTo(b.x, b.y);
+    sctx.stroke();
+  }
+
+  // 描きはじめる前の絵に、いまの線を重ねて見せる
+  function showStroke() {
+    ctx.putImageData(base, 0, 0);
+    ctx.globalCompositeOperation = tool === 'eraser' ? 'destination-out' : 'source-over';
+    ctx.drawImage(strokeCv, 0, 0);
+    ctx.globalCompositeOperation = 'source-over';
   }
 
   cv.addEventListener('pointerdown', (e) => {
@@ -280,8 +298,11 @@
     pid = e.pointerId;
     drawing = true;
     pushUndo();
+    base = undoStack[undoStack.length - 1];
+    sctx.clearRect(0, 0, SIZE, SIZE);
     last = p;
     dot(p);
+    showStroke();
   });
   cv.addEventListener('pointermove', (e) => {
     if (!drawing || e.pointerId !== pid) return;
@@ -289,11 +310,25 @@
     const p = pos(e);
     line(last, p);
     last = p;
+    showStroke();
   });
   const endStroke = (e) => {
     if (!drawing || e.pointerId !== pid) return;
     drawing = false;
     pid = null;
+    // ふちのぼかしをなくす: はんぶん以上こい所だけ、その色で(消しゴムなら消す)
+    const id = sctx.getImageData(0, 0, SIZE, SIZE);
+    const px = id.data;
+    const rgb = tool === 'eraser' ? [0, 0, 0] : PALETTE[colorIdx].rgb;
+    for (let i = 0; i < px.length; i += 4) {
+      if (px[i + 3] >= 128) {
+        px[i] = rgb[0]; px[i + 1] = rgb[1]; px[i + 2] = rgb[2]; px[i + 3] = 255;
+      } else {
+        px[i] = px[i + 1] = px[i + 2] = px[i + 3] = 0;
+      }
+    }
+    sctx.putImageData(id, 0, 0);
+    showStroke();
     harden();
   };
   cv.addEventListener('pointerup', endStroke);
