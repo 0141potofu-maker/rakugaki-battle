@@ -280,6 +280,10 @@
           return clamp(delta(part.d0, 0), 1.6) * 0.8;
         case 'charge':
           return clamp(delta(part.d0, Math.PI / 2), 1.2) * 0.4;
+        case 'counter':
+          return clamp(delta(part.d0, 0), 1.2) * 0.5; // 手を前にかまえる
+        case 'slam':
+          return clamp(delta(part.d0, Math.PI / 2), 1.8) * (0.6 + 0.4 * Math.sin(Math.min(1, pr * 2) * Math.PI / 2)); // 手を下にふりおろす
       }
     } else {
       const front = idx === ff;
@@ -356,6 +360,10 @@
       ctx.translate(cx, cy); ctx.rotate(1.1); ctx.translate(-cx, -cy);
     } else if (st === 'charge') {
       ctx.translate(cx + Math.sin(pose.t * 70) * 2, rig.h); ctx.scale(1.03, 0.94); ctx.translate(-cx, -rig.h);
+    } else if (st === 'counter') {
+      ctx.translate(cx, rig.h); ctx.scale(1.02, 0.95); ctx.translate(-cx, -rig.h);
+    } else if (st === 'slam') {
+      ctx.translate(cx, rig.h); ctx.scale(1, 1 - 0.14 * Math.sin(Math.min(1, pose.atk * 1.6) * Math.PI)); ctx.translate(-cx, -rig.h);
     }
     for (const p of rig.parts) if (p.k === 'f') drawPart(ctx, p, pose, fh, ff);
     if (ready(rig.body)) ctx.drawImage(rig.body, 0, 0);
