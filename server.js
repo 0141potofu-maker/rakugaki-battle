@@ -29,6 +29,8 @@ const PHYS = {
 const STOCKS = 3;           // 残機
 const RESPAWN_FRAMES = 90;  // 撃墜されてから復活するまで(1.5秒)
 const INV_FRAMES = 150;     // 復活してからの無敵(2.5秒)
+const BUFF_FRAMES = 1200;   // 水色の強化の長さ(20秒)
+const NCOLORS = 8;          // ペンの色の数(赤 青 黄 白 黒 灰 橙 水)
 
 // ---------- プレイヤー ----------
 function makePlayer(slot) {
@@ -41,13 +43,13 @@ function makePlayer(slot) {
     limbs: [],     // 手足の大きさ(攻撃判定に使う)
     bw: 56, bh: 84, // キャラの大きさ(ゲーム内)
     area: 0,        // 塗ったピクセル数(体重・速さに使う)
-    colors: [0, 0, 0, 0, 0], // 赤・青・黄・白・黒のピクセル数(あとで技に使う)
+    colors: [0, 0, 0, 0, 0, 0, 0, 0], // 色ごとのピクセル数(赤 青 黄 白 黒 灰 橙 水)
     weight: 100,    // 体重(重いほど吹っ飛びにくい)
     speedMul: 1,    // 移動の速さの倍率
     gravMul: 1,     // 重力の倍率
     handR: 18,      // 手の大きさ(攻撃判定の大きさになる)
     footR: 18,      // 足の大きさ(攻撃判定の大きさになる)
-    colSp: 0,       // 必殺技の色(0赤 1青 2黄 3白 4黒)
+    colSp: 0,       // 必殺技の色(0赤 1青 2黄 3白 4黒 5灰 6橙 7水)
     colNm: 0,       // 通常攻撃の色
     airSp: false,   // 空中必殺を使った(着地・崖つかまりで回復)
     fxAcc: [],      // 技の見た目(当たり判定の形)
@@ -68,6 +70,7 @@ function makePlayer(slot) {
     life: 0,   // 0=戦っている 1=復活待ち 2=脱落
     respT: 0,  // 復活までのフレーム数
     inv: 0,    // 無敵のフレーム数
+    buff: 0,   // 水色の強化が、あと何フレーム続くか
     stun: 0,   // のけぞりのフレーム数
     atk: null, // 技を出している間の状態 {mv, t, hit, col, d, end}
     ko: false, // 撃墜されたばかり
@@ -98,7 +101,7 @@ function applyBody(p) {
   p.footR = fa ? limbR(fa) : 18;
 
   // いちばん多い色が必殺技、2番目に多い色が通常攻撃(同じ数なら 赤→青→黄→白→黒 の順)
-  const order = [0, 1, 2, 3, 4].sort((x, y) => p.colors[y] - p.colors[x] || x - y);
+  const order = [0, 1, 2, 3, 4, 5, 6, 7].sort((x, y) => p.colors[y] - p.colors[x] || x - y);
   p.colSp = order[0];
   p.colNm = p.colors[order[1]] > 0 ? order[1] : order[0];
 }
@@ -109,6 +112,7 @@ function resetFighter(p) {
   p.life = 0;
   p.respT = 0;
   p.inv = 0;
+  p.buff = 0;
   p.vote = false;
 }
 
@@ -153,6 +157,7 @@ function koPlayer(r, p, events) {
   p.hang = 0;
   p.atk = null;
   p.stun = 0;
+  p.buff = 0;
   p.vx = 0;
   p.vy = 0;
   if (p.stocks > 0 || !r.versus) {
@@ -194,6 +199,21 @@ function hitPoint(sh, q) {
   };
 }
 
+// 灰色のカウンター: 構えている間に攻撃を受けたら、ダメージなしで止めて、反撃にうつる
+// att は攻撃した人(弾のときは null)。hx,hy は当たった場所
+function tryCounter(att, q, hx, events) {
+  const a = q.atk;
+  if (!a || !a.mv.counter || a.d.counterDone) return false;
+  if (a.t < a.mv.counter[0] || a.t > a.mv.counter[1]) return false;
+  a.d.counterDone = true;
+  q.f = hx >= q.x ? 1 : -1; // 攻撃が来たほうを向く
+  a.t = a.mv.counterJump;   // 反撃の動きへ
+  a.end = a.mv.counterEnd;
+  q.inv = Math.max(q.inv, 24); // 反撃のあいだは、つづけて攻撃されない
+  events.push({ k: 'ctr', x: +hx.toFixed(1), y: +(q.y - q.bh * 0.5).toFixed(1) });
+  return true;
+}
+
 // 攻撃が当たったとき: ダメージを増やして、吹っ飛ばす
 // h = {dmg, bkb(基本の強さ), kbg(ダメージによる増え方), ang(角度。上が正、下が負)}
 function applyHit(att, tgt, hx, hy, h, events, o) {
@@ -219,7 +239,7 @@ function applyHit(att, tgt, hx, hy, h, events, o) {
 
 // ---------- 技 ----------
 // 技の名前は「色 + 通常n/必殺s + 地上g/空中a」。例: rng=赤の通常・地上、ksa=黒の必殺・空中
-const COLOR_KEYS = ['r', 'b', 'y', 'w', 'k'];
+const COLOR_KEYS = ['r', 'b', 'y', 'w', 'k', 'g', 'o', 'c']; // 赤 青 黄 白 黒 灰 橙 水
 const H = (dmg, bkb, kbg, ang) => ({ dmg, bkb, kbg, ang });
 const JAB = H(1, 70, 0, 25); // 連続ヒットの、1発ごとの弱い当たり
 
@@ -256,6 +276,7 @@ function makeFx(p, env) {
         if (!shapeHitsRect(shape, hurtRect(q))) continue;
         a.hit.push(key);
         const pt = hitPoint(shape, q);
+        if (tryCounter(p, q, pt.x, env.events)) continue;
         applyHit(p, q, pt.x, pt.y, h, env.events, {
           dirX: o.away ? (q.x >= pt.cx ? 1 : -1) : p.f,
           carry: o.carry,
@@ -264,7 +285,7 @@ function makeFx(p, env) {
       }
     },
     proj(o) {
-      env.projs.push(Object.assign({ owner: p.slot, col: a.col, life: 60 }, o));
+      env.projs.push(Object.assign({ owner: p.slot, col: a.col, life: 60, shape: 0 }, o));
     },
   };
 }
@@ -389,7 +410,7 @@ const MOVES = {
       }
     },
   },
-  // 必殺・空中: 向いている方向の斜め上に、高速で突進(距離は元の1.75倍)
+  // 必殺・空中: 向いている方向の斜め上に、高速で突進
   ysa: melee({
     style: 'dash', total: 36, lockJump: true, startup: 6, active: 16, r: 'hf',
     ctl: (p, t) => (t <= 6 ? { vx: 0, vy: 0 } : t <= 22 ? { vx: p.f * 1085, vy: -1085 } : null),
@@ -462,7 +483,7 @@ const MOVES = {
       }
     },
   },
-  // 必殺・空中: 溜めて横に突進(約0.7秒溜める。突進の距離は元の1.75倍)
+  // 必殺・空中: 溜めて横に突進(約0.7秒溜める)
   ksa: {
     style: 'dash', chargeT: 42, total: 76, lockJump: true,
     ctl: (p, t) => (t <= 42 ? { vx: 0, vy: 100 } : t <= 62 ? { vx: p.f * 1400, vy: 0 } : null),
@@ -474,12 +495,151 @@ const MOVES = {
       if (t === 63) p.vx *= 0.3;
     },
   },
+  // ===== 灰色(パンチ・キック・カウンター) =====
+  // 通常・地上: パンチ
+  gng: melee({
+    style: 'punch', total: 20, startup: 4, active: 5, r: 'h',
+    shape: (p, R) => circ(frontX(p, R * 0.5), midY(p), R), hit: H(7, 280, 9, 38),
+  }),
+  // 通常・空中: 左右にパンチとキック(パンチのあと、うしろを向いてキック)
+  gna: {
+    style: 'punch', total: 28, segs: [{ to: 13, style: 'punch' }, { to: 28, style: 'kick' }],
+    act(p, t, fx) {
+      if (inWin(t, 4, 5)) fx.hit('p', circ(frontX(p, pickR(p, 'h') * 0.5), midY(p), pickR(p, 'h')), H(6, 260, 8, 40));
+      if (t === 13) p.f = -p.f;
+      if (inWin(t, 13, 6)) fx.hit('k', circ(frontX(p, pickR(p, 'f') * 0.5), p.y - p.bh * 0.35, pickR(p, 'f')), H(7, 300, 10, 40));
+    },
+  },
+  // 必殺・地上: カウンター(構えている間に攻撃を受けると、止めて反撃する)
+  gsg: {
+    style: 'counter', total: 56, lockJump: true,
+    counter: [4, 36], counterJump: 36, counterEnd: 50, // 4〜36フレーム目が受け付け時間
+    animOf: (a, t) => (a.d.counterDone && t > 36 ? { ms: 'punch', at: t - 36, tt: 14 } : { ms: 'counter', at: Math.min(t, 36), tt: 36 }),
+    ctl: (p, t) => ({ vx: 0 }),
+    act(p, t, fx) {
+      const a = p.atk;
+      if (a.d.counterDone && inWin(t, 36, 10)) {
+        const R = pickR(p, 'h');
+        fx.hit('c', circ(frontX(p, R * 0.6), midY(p), R * 1.4 + 30), H(14, 420, 14, 40));
+      }
+    },
+  },
+  // 必殺・空中: 斜め上に回転しながら移動
+  gsa: melee({
+    style: 'spin', total: 40, lockJump: true, startup: 5, active: 18, r: 'hf',
+    ctl: (p, t) => (t <= 5 ? { vx: 0, vy: 0 } : t <= 23 ? { vx: p.f * 760, vy: -760 } : null),
+    shape: (p, R) => circ(p.x, p.y - p.bh / 2, Math.max(p.bw, p.bh) / 2 + R * 0.5),
+    hit: H(9, 300, 10, 50), opt: { away: true },
+    post: (p, t) => { if (t === 24) { p.vx *= 0.4; p.vy *= 0.4; } },
+  }),
+
+  // ===== オレンジ(連続技・衝撃波) =====
+  // 通常・地上: パンチとキックの2連撃
+  ong: {
+    style: 'punch', total: 30, segs: [{ to: 12, style: 'punch' }, { to: 30, style: 'kick' }],
+    ctl: (p, t) => (t >= 12 && t <= 20 ? { vx: p.f * 220 } : null),
+    act(p, t, fx) {
+      if (inWin(t, 4, 5)) fx.hit('p', circ(frontX(p, pickR(p, 'h') * 0.5), midY(p), pickR(p, 'h')), H(4, 110, 0, 25));
+      if (inWin(t, 14, 6)) fx.hit('k', circ(frontX(p, pickR(p, 'f') * 0.5), p.y - p.bh * 0.3, pickR(p, 'f')), H(5, 300, 10, 40));
+    },
+  },
+  // 通常・空中: 連続ヒットの突進
+  ona: {
+    style: 'dash', total: 40, lockJump: true,
+    ctl: (p, t) => (t <= 6 ? { vx: 0, vy: 0 } : t <= 28 ? { vx: p.f * 720, vy: 0 } : null),
+    act(p, t, fx) {
+      const R = pickR(p, 'hf');
+      if (t > 6 && t <= 28 && (t - 7) % 4 === 0) {
+        fx.hit('m' + t, circ(p.x + p.f * p.bw * 0.3, p.y - p.bh * 0.5, R * 0.9 + p.bh * 0.25), JAB, { carry: { vx: p.f * 720, vy: 0 } });
+      }
+      if (t === 29) p.vx *= 0.3;
+      if (t >= 29 && t <= 33) fx.hit('fin', circ(p.x + p.f * p.bw * 0.35, p.y - p.bh * 0.5, R * 1.1 + p.bh * 0.25), H(3, 320, 8, 40));
+    },
+  },
+  // 必殺・地上: 地面を叩いて、左右に衝撃波
+  osg: {
+    style: 'slam', total: 34, segs: [{ to: 14, style: 'charge' }, { to: 34, style: 'slam' }],
+    act(p, t, fx) {
+      const R = pickR(p, 'h');
+      if (t === 14) {
+        for (const side of [-1, 1]) {
+          fx.proj({ x: p.x + side * (p.bw / 2 + 10), y: p.y - 22, vx: side * 650, vy: 0, r: R * 0.6 + 14, life: 55, hit: H(9, 340, 11, 55), dx: side, shape: 2, ground: true });
+        }
+      }
+    },
+  },
+  // 必殺・空中: 斜め上に移動して、反対側の斜め下に衝撃波
+  osa: {
+    style: 'dash', total: 38, lockJump: true, segs: [{ to: 21, style: 'dash' }, { to: 38, style: 'shootdown' }],
+    ctl: (p, t) => (t <= 5 ? { vx: 0, vy: 0 } : t <= 20 ? { vx: p.f * 600, vy: -600 } : t <= 26 ? { vx: 0, vy: 0 } : null),
+    act(p, t, fx) {
+      if (t === 21) {
+        const R = pickR(p, 'hf');
+        fx.proj({ x: p.x, y: p.y - p.bh * 0.4, vx: -p.f * 500, vy: 500, r: R * 0.8 + 12, life: 55, hit: H(9, 320, 10, 35), dx: -p.f });
+      }
+    },
+  },
+
+  // ===== 水色(氷・強化) =====
+  // 通常・地上: 蹴りながら突進
+  cng: melee({
+    style: 'kick', total: 28, startup: 5, active: 11, r: 'f',
+    ctl: (p, t) => (t > 4 && t <= 16 ? { vx: p.f * 650 } : null),
+    shape: (p, R) => circ(frontX(p, R * 0.5), p.y - p.bh * 0.25, R), hit: H(8, 300, 10, 40),
+  }),
+  // 通常・空中: 左右につららを生成して落とす
+  cna: {
+    style: 'up', total: 36,
+    act(p, t, fx) {
+      if (t === 10) {
+        const R = pickR(p, 'h');
+        for (const side of [-1, 1]) {
+          fx.proj({ x: p.x + side * (p.bw / 2 + 90), y: p.y - p.bh - 170, vx: 0, vy: 700, r: R * 0.45 + 12, life: 70, hit: H(8, 250, 9, -45), dx: side, shape: 1 });
+        }
+      }
+    },
+  },
+  // 必殺・地上(1回目): 約20秒間、水色のオーラで動きが速くなる
+  csg: {
+    style: 'charge', total: 30, lockJump: true,
+    act(p, t) { if (t === 14) p.buff = BUFF_FRAMES; },
+  },
+  // 必殺・地上(強化中): 上昇する突進技
+  csg2: melee({
+    style: 'dash', total: 40, lockJump: true, startup: 6, active: 18, r: 'hf',
+    ctl: (p, t) => (t <= 6 ? { vx: 0, vy: 0 } : t <= 24 ? { vx: p.f * 750, vy: -700 } : null),
+    shape: (p, R) => circ(p.x + p.f * p.bw * 0.2, p.y - p.bh * 0.5, R * 0.9 + p.bh * 0.25),
+    hit: H(10, 340, 11, 65), opt: { away: true },
+    post: (p, t) => { if (t === 25) { p.vx *= 0.4; p.vy *= 0.4; } },
+  }),
+  // 必殺・空中: つららを生成しながら斜め上に移動
+  csa: {
+    style: 'dash', total: 42, lockJump: true,
+    ctl: (p, t) => (t <= 5 ? { vx: 0, vy: 0 } : t <= 24 ? { vx: p.f * 520, vy: -520 } : null),
+    act(p, t, fx) {
+      const R = pickR(p, 'h');
+      if (t >= 8 && t <= 23 && (t - 8) % 3 === 0) {
+        fx.proj({ x: p.x, y: p.y - p.bh * 0.2, vx: 0, vy: 520, r: R * 0.4 + 10, life: 60, hit: H(6, 220, 8, -50), dx: p.f, shape: 1 });
+      }
+      if (t === 25) { p.vx *= 0.4; p.vy *= 0.4; }
+    },
+  },
 };
 
 // 技のアニメーション用: 今の動きの名前と、その動きの中での進みぐあい(溜めのある技は、溜めと攻撃を別々に数える)
 function animOf(a) {
   const mv = a.mv;
   const t = a.t;
+  if (mv.animOf) return mv.animOf(a, t);
+  if (mv.segs) {
+    let prev = 0;
+    for (const sg of mv.segs) {
+      if (t <= sg.to) return { ms: sg.style, at: t - prev, tt: sg.to - prev };
+      prev = sg.to;
+    }
+    const last = mv.segs[mv.segs.length - 1];
+    return { ms: last.style, at: last.to - (mv.segs.length > 1 ? mv.segs[mv.segs.length - 2].to : 0), tt: last.to - (mv.segs.length > 1 ? mv.segs[mv.segs.length - 2].to : 0) };
+  }
   if (!mv.chargeT) return { ms: mv.style, at: t, tt: mv.total };
   if (t <= mv.chargeT) return { ms: 'charge', at: t, tt: mv.chargeT };
   return { ms: mv.style, at: t - mv.chargeT, tt: mv.total - mv.chargeT };
@@ -493,7 +653,8 @@ function startAttack(p, special) {
     p.airSp = true;
   }
   const col = special ? p.colSp : p.colNm;
-  const key = COLOR_KEYS[col] + (special ? 's' : 'n') + (air ? 'a' : 'g');
+  let key = COLOR_KEYS[col] + (special ? 's' : 'n') + (air ? 'a' : 'g');
+  if (key === 'csg' && p.buff > 0) key = 'csg2'; // 強化中の水色の地上必殺は、上昇する突進技
   p.atk = { mv: MOVES[key], t: 0, hit: [], col, key, d: {}, end: 0 };
   return true;
 }
@@ -508,11 +669,15 @@ function stepProjectiles(r, alive) {
     let dead = b.life <= 0 || Math.abs(b.x) > BLAST.x + 200 || b.y > BLAST.bottom + 200 || b.y < BLAST.top - 200;
     // 下向きの弾は、ステージにぶつかって消える
     if (!dead && b.vy > 0 && Math.abs(b.x) <= STAGE.w / 2 && b.y + b.r >= STAGE.top) dead = true;
+    // 地面の衝撃波は、ステージのはしで消える
+    if (!dead && b.ground && Math.abs(b.x) > STAGE.w / 2 + 30) dead = true;
     if (!dead) {
       for (const q of alive) {
         if (q.slot === b.owner || q.life !== 0 || q.inv > 0 || q.hang) continue;
         if (circleHitsRect(b.x, b.y, b.r, hurtRect(q))) {
-          applyHit({ f: b.dx }, q, b.x, b.y, b.hit, r.events, { dirX: b.dx, col: b.col });
+          if (!tryCounter(null, q, b.x, r.events)) {
+            applyHit({ f: b.dx }, q, b.x, b.y, b.hit, r.events, { dirX: b.dx, col: b.col });
+          }
           dead = true;
           break;
         }
@@ -597,6 +762,7 @@ function step(p, occ, env) {
   p.prevB = !!i.b;
   if (p.cd > 0) p.cd--;
   if (p.inv > 0) p.inv--;
+  if (p.buff > 0) p.buff--;
 
   if (p.hang) {
     hangUpdate(p, pL, pR, pJ);
@@ -622,12 +788,13 @@ function step(p, occ, env) {
 
   // 左右移動(地上で技を出している間・のけぞり中は動けない)
   const dir = stunned || (p.atk && p.g) ? 0 : (i.r ? 1 : 0) - (i.l ? 1 : 0);
-  const maxRun = PHYS.run * p.speedMul;
+  const mob = p.buff > 0 ? 1.4 : 1; // 水色の強化中は、動きが速くなる
+  const maxRun = PHYS.run * p.speedMul * mob;
   if (ctl && ctl.vx !== undefined) {
     p.vx = ctl.vx;
   } else if (dir) {
     if (!p.atk) p.f = dir;
-    const acc = p.g ? PHYS.groundAcc : PHYS.airAcc;
+    const acc = (p.g ? PHYS.groundAcc : PHYS.airAcc) * mob;
     const target = dir * maxRun;
     if (p.vx < target) p.vx = Math.min(target, p.vx + acc * DT);
     else p.vx = Math.max(target, p.vx - acc * DT);
@@ -856,7 +1023,8 @@ wss.on('connection', (ws) => {
       player.hb = rig.hb.map((v) => v * SCALE);
       player.limbs = rig.parts.map((p) => ({ k: p.k, a: p.a }));
       player.area = clampInt(m.area, 65536);
-      player.colors = Array.isArray(m.c) && m.c.length === 5 ? m.c.map((v) => clampInt(v, 65536)) : [0, 0, 0, 0, 0];
+      player.colors = [];
+      for (let k = 0; k < NCOLORS; k++) player.colors.push(Array.isArray(m.c) ? clampInt(m.c[k], 65536) : 0);
       applyBody(player);
       resetFighter(player);
       player.active = true;
@@ -965,9 +1133,10 @@ setInterval(() => {
           tt: p.atk ? animOf(p.atk).tt : 0,
           ms: p.atk ? animOf(p.atk).ms : '',
           ch: p.atk && p.atk.mv.chargeT && p.atk.t <= p.atk.mv.chargeT ? Math.round((100 * p.atk.t) / p.atk.mv.chargeT) : 0,
+          bf: p.buff > 0 ? Math.max(1, Math.round((100 * p.buff) / BUFF_FRAMES)) : 0,
           fx: p.fxAcc,
         })),
-        pj: r.projs.map((b) => [Math.round(b.x), Math.round(b.y), Math.round(b.r), b.col, Math.round(b.vx), Math.round(b.vy)]),
+        pj: r.projs.map((b) => [Math.round(b.x), Math.round(b.y), Math.round(b.r), b.col, Math.round(b.vx), Math.round(b.vy), b.shape || 0]),
       };
       for (const p of present) p.fxAcc = [];
       if (r.events.length) {
