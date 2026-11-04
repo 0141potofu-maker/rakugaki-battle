@@ -571,7 +571,7 @@ const MOVES = {
   // 必殺・空中: 斜め上に移動して、反対側の斜め下に衝撃波
   osa: {
     style: 'dash', total: 38, lockJump: true, segs: [{ to: 21, style: 'dash' }, { to: 38, style: 'shootdown' }],
-    ctl: (p, t) => (t <= 5 ? { vx: 0, vy: 0 } : t <= 20 ? { vx: p.f * 600, vy: -600 } : t <= 26 ? { vx: 0, vy: 0 } : null),
+    ctl: (p, t) => (t <= 5 ? { vx: 0, vy: 0 } : t <= 20 ? { vx: p.f * 1050, vy: -1050 } : t <= 26 ? { vx: 0, vy: 0 } : null),
     act(p, t, fx) {
       if (t === 21) {
         const R = pickR(p, 'hf');
