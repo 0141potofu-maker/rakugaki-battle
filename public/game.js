@@ -13,6 +13,7 @@
   }, { passive: false });
   // 指2本でのピンチ拡大をふせぐ
   document.addEventListener('touchmove', (e) => { if (e.touches.length > 1) e.preventDefault(); }, { passive: false });
+
   // ---------- ホーム画面 ----------
   const match = location.pathname.match(/^\/r\/([a-z0-9]{3,12})$/i);
   if (!match) {
@@ -41,8 +42,9 @@
   let myVote = false;  // 「もういちど」を押した
   const effects = [];  // ヒットや撃墜のエフェクト
   const SLOT_COLORS = ['#e5322d', '#2563e8', '#f5c518', '#ffffff'];
-  const COLOR_NAMES = ['赤', '青', '黄', '白', '黒'];
-  const HIT_COLORS = ['#e5322d', '#2563e8', '#f5c518', '#ffffff', '#777777'];
+  const COLOR_NAMES = ['赤', '青', '黄', '白', '黒', '灰', '橙', '水'];
+  const HIT_COLORS = ['#e5322d', '#2563e8', '#f5c518', '#ffffff', '#777777', '#9aa0a8', '#f28a1d', '#4fc3f7'];
+  const COLOR_CSS = ['#e5322d', '#2563e8', '#f5c518', '#ffffff', '#151515', '#8d939c', '#f28a1d', '#4fc3f7'];
   const fxList = [];   // 技の当たり判定の見た目 {sh, t}
   let projs = [];      // 飛んでいる弾 {x,y,r,c,vx,vy,t}
   let roster = []; // [{s, r}]
@@ -187,7 +189,7 @@
           }
           const wasHang = o.h;
           o.tx = p.x; o.ty = p.y; o.f = p.f; o.g = p.g; o.h = p.h; o.vx = p.vx; o.vy = p.vy;
-          o.d = p.d; o.st = p.st; o.l = p.l; o.iv = p.iv; o.hs = p.hs; o.at = p.at; o.tt = p.tt; o.ms = p.ms; o.ch = p.ch;
+          o.d = p.d; o.st = p.st; o.l = p.l; o.iv = p.iv; o.hs = p.hs; o.at = p.at; o.tt = p.tt; o.ms = p.ms; o.ch = p.ch; o.bf = p.bf;
           if (p.fx) for (const sh of p.fx) fxList.push({ sh, t: performance.now() });
           if (p.s === me && p.h && !wasHang && hintCount < 2) {
             hintCount++;
@@ -196,7 +198,7 @@
         }
         for (const s of [...players.keys()]) if (!alive.has(s)) players.delete(s);
         const tn = performance.now();
-        projs = (m.pj || []).map((b) => ({ x: b[0], y: b[1], r: b[2], c: b[3], vx: b[4], vy: b[5], t: tn }));
+        projs = (m.pj || []).map((b) => ({ x: b[0], y: b[1], r: b[2], c: b[3], vx: b[4], vy: b[5], k: b[6] || 0, t: tn }));
         if (m.ev) {
           const now = performance.now();
           for (const e of m.ev) effects.push({ k: e.k, x: e.x, y: e.y, c: e.c, t: now });
@@ -384,6 +386,47 @@
     const w = a ? a.w : DEF.w;
     const h = a ? a.h : DEF.h;
 
+    // 水色の強化中: 水色のオーラ(終わりが近いと点滅)
+    if (o.bf > 0 && (o.bf > 15 || Math.floor(performance.now() / 120) % 2)) {
+      const now = performance.now();
+      const rr = Math.max(w, h) * 0.65 + 14 + 4 * Math.sin(now / 130);
+      ctx.save();
+      ctx.translate(x, y - h / 2);
+      ctx.fillStyle = 'rgba(79,195,247,0.22)';
+      ctx.beginPath(); ctx.arc(0, 0, rr, 0, Math.PI * 2); ctx.fill();
+      ctx.strokeStyle = 'rgba(79,195,247,0.85)';
+      ctx.lineWidth = 6;
+      ctx.beginPath(); ctx.arc(0, 0, rr, 0, Math.PI * 2); ctx.stroke();
+      ctx.lineCap = 'round';
+      ctx.lineWidth = 4;
+      for (let n = 0; n < 6; n++) {
+        const ph = (now / 600 + n / 6) % 1;
+        const ax = Math.cos(n * 1.05 + now / 900) * rr * 0.8;
+        ctx.globalAlpha = 1 - ph;
+        ctx.beginPath();
+        ctx.moveTo(ax, rr * 0.6 - ph * rr * 1.6);
+        ctx.lineTo(ax, rr * 0.6 - ph * rr * 1.6 - 14);
+        ctx.stroke();
+      }
+      ctx.restore();
+    }
+
+    // 灰色のカウンターのかまえ: バリア
+    if (o.ms === 'counter' && o.at > 0) {
+      const rr = Math.max(w, h) * 0.65 + 12;
+      ctx.save();
+      ctx.translate(x, y - h / 2);
+      ctx.fillStyle = 'rgba(200,205,212,0.28)';
+      ctx.beginPath(); ctx.arc(0, 0, rr, 0, Math.PI * 2); ctx.fill();
+      ctx.strokeStyle = '#9aa0a8';
+      ctx.lineWidth = 8;
+      ctx.beginPath(); ctx.arc(0, 0, rr, 0, Math.PI * 2); ctx.stroke();
+      ctx.strokeStyle = INK;
+      ctx.lineWidth = 3;
+      ctx.beginPath(); ctx.arc(0, 0, rr + 5, 0, Math.PI * 2); ctx.stroke();
+      ctx.restore();
+    }
+
     // 溜めているとき: まわりに輪が集まってくる
     if (o.ch > 0) {
       const k = o.ch / 100;
@@ -529,7 +572,7 @@
         ctx.lineTo(Math.cos(ang) * r * 0.75, Math.sin(ang) * r * 0.75);
         ctx.stroke();
       }
-    } else {
+    } else if (col === 4) {
       // 黒: 重い一撃
       ctx.fillStyle = 'rgba(21,21,21,0.82)';
       ctx.strokeStyle = '#e5322d';
@@ -537,7 +580,103 @@
       ctx.beginPath(); ctx.arc(0, 0, r, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
       ctx.fillStyle = 'rgba(255,255,255,0.25)';
       ctx.beginPath(); ctx.arc(-r * 0.25, -r * 0.25, r * 0.3, 0, Math.PI * 2); ctx.fill();
+    } else if (col === 5) {
+      // 灰: パンチ・キック
+      ctx.fillStyle = 'rgba(150,156,166,0.92)';
+      ctx.strokeStyle = INK;
+      ctx.lineWidth = 4;
+      ctx.beginPath(); ctx.arc(0, 0, r, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+      ctx.fillStyle = 'rgba(255,255,255,0.55)';
+      ctx.beginPath(); ctx.arc(-r * 0.3, -r * 0.3, r * 0.28, 0, Math.PI * 2); ctx.fill();
+      ctx.lineCap = 'round';
+      ctx.strokeStyle = 'rgba(255,255,255,0.7)';
+      ctx.lineWidth = 3;
+      for (let k = 0; k < 3; k++) {
+        const ang = 0.6 + k * 0.5;
+        ctx.beginPath();
+        ctx.moveTo(Math.cos(ang) * r * 0.4, Math.sin(ang) * r * 0.4);
+        ctx.lineTo(Math.cos(ang) * r * 0.85, Math.sin(ang) * r * 0.85);
+        ctx.stroke();
+      }
+    } else if (col === 6) {
+      // 橙: 衝撃波・連続ヒット
+      const pul = 1 + 0.08 * Math.sin(now * 0.04 + x * 0.05);
+      ctx.fillStyle = 'rgba(242,138,29,0.9)';
+      ctx.beginPath(); ctx.arc(0, 0, r * pul, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = 'rgba(255,226,150,0.95)';
+      ctx.beginPath(); ctx.arc(0, 0, r * 0.55, 0, Math.PI * 2); ctx.fill();
+      ctx.strokeStyle = INK;
+      ctx.lineWidth = 4;
+      ctx.beginPath(); ctx.arc(0, 0, r * pul, 0, Math.PI * 2); ctx.stroke();
+      ctx.strokeStyle = 'rgba(255,255,255,0.8)';
+      ctx.lineWidth = 3;
+      ctx.beginPath(); ctx.arc(0, 0, r * 0.8, 0.3, 1.6); ctx.stroke();
+    } else {
+      // 水色: 氷
+      ctx.fillStyle = 'rgba(79,195,247,0.78)';
+      ctx.beginPath(); ctx.arc(0, 0, r, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = 'rgba(230,248,255,0.95)';
+      ctx.beginPath(); ctx.arc(-r * 0.15, -r * 0.15, r * 0.5, 0, Math.PI * 2); ctx.fill();
+      ctx.strokeStyle = '#fff';
+      ctx.lineWidth = 3;
+      ctx.lineCap = 'round';
+      for (let k = 0; k < 6; k++) {
+        const ang = (k * Math.PI) / 3 + 0.3;
+        ctx.beginPath();
+        ctx.moveTo(Math.cos(ang) * r * 0.3, Math.sin(ang) * r * 0.3);
+        ctx.lineTo(Math.cos(ang) * r * 1.0, Math.sin(ang) * r * 1.0);
+        ctx.stroke();
+      }
+      ctx.strokeStyle = INK;
+      ctx.lineWidth = 3;
+      ctx.beginPath(); ctx.arc(0, 0, r, 0, Math.PI * 2); ctx.stroke();
     }
+    ctx.restore();
+  }
+
+  // つらら(下をむいたとがった形)
+  function drawIcicle(x, y, r) {
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.lineJoin = 'round';
+    ctx.beginPath();
+    ctx.moveTo(-r * 0.75, -r * 1.7);
+    ctx.lineTo(r * 0.75, -r * 1.7);
+    ctx.lineTo(0, r * 2.1);
+    ctx.closePath();
+    ctx.fillStyle = 'rgba(190,236,255,0.95)';
+    ctx.fill();
+    ctx.strokeStyle = INK;
+    ctx.lineWidth = 4;
+    ctx.stroke();
+    ctx.strokeStyle = '#4fc3f7';
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.moveTo(-r * 0.25, -r * 1.4);
+    ctx.lineTo(0, r * 1.5);
+    ctx.stroke();
+    ctx.strokeStyle = '#fff';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(-r * 0.45, -r * 1.3);
+    ctx.lineTo(-r * 0.15, r * 0.4);
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  // 地面をはしる衝撃波(よこ長のだ円)
+  function drawWave(x, y, r, col, vx, now) {
+    ctx.save();
+    ctx.translate(x, y);
+    const dir = vx >= 0 ? 1 : -1;
+    ctx.scale(dir, 1);
+    ctx.fillStyle = 'rgba(242,138,29,0.88)';
+    ctx.beginPath(); ctx.ellipse(0, 0, r * 1.5, r * 0.85, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = 'rgba(255,226,150,0.95)';
+    ctx.beginPath(); ctx.ellipse(r * 0.2, 0, r * 0.85, r * 0.45, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = INK;
+    ctx.lineWidth = 4;
+    ctx.beginPath(); ctx.ellipse(0, 0, r * 1.5, r * 0.85, 0, 0, Math.PI * 2); ctx.stroke();
     ctx.restore();
   }
 
@@ -586,13 +725,15 @@
       ctx.globalAlpha = 0.35;
       ctx.lineCap = 'round';
       ctx.lineWidth = b.r * 1.2;
-      ctx.strokeStyle = ['#e5322d', '#2563e8', '#f5c518', '#ffffff', '#151515'][b.c] || '#2563e8';
+      ctx.strokeStyle = COLOR_CSS[b.c] || '#2563e8';
       ctx.beginPath();
       ctx.moveTo(x - b.vx * 0.05, y - b.vy * 0.05);
       ctx.lineTo(x, y);
       ctx.stroke();
       ctx.restore();
-      drawBlob(x, y, b.r, b.c, now);
+      if (b.k === 1) drawIcicle(x, y, b.r);
+      else if (b.k === 2) drawWave(x, y, b.r, b.c, b.vx, now);
+      else drawBlob(x, y, b.r, b.c, now);
     }
   }
 
@@ -600,24 +741,27 @@
   function drawHitEffects() {
     const now = performance.now();
     for (const e of effects) {
-      if (e.k !== 'hit') continue;
-      const t = (now - e.t) / 280;
+      if (e.k !== 'hit' && e.k !== 'ctr') continue;
+      const big = e.k === 'ctr';
+      const t = (now - e.t) / (big ? 380 : 280);
       if (t < 0 || t > 1) continue;
       ctx.save();
       ctx.translate(e.x, e.y);
       ctx.globalAlpha = 1 - t;
       ctx.lineCap = 'round';
-      for (let k = 0; k < 8; k++) {
-        const ang = (k * Math.PI) / 4 + 0.4;
-        const r0 = 16 + t * 24;
-        const r1 = 40 + t * 56;
+      const rays = big ? 12 : 8;
+      const sc = big ? 1.7 : 1;
+      for (let k = 0; k < rays; k++) {
+        const ang = (k * Math.PI * 2) / rays + 0.4;
+        const r0 = (16 + t * 24) * sc;
+        const r1 = (40 + t * 56) * sc;
         ctx.strokeStyle = INK;
         ctx.lineWidth = 11;
         ctx.beginPath();
         ctx.moveTo(Math.cos(ang) * r0, Math.sin(ang) * r0);
         ctx.lineTo(Math.cos(ang) * r1, Math.sin(ang) * r1);
         ctx.stroke();
-        ctx.strokeStyle = HIT_COLORS[e.c] || '#fff';
+        ctx.strokeStyle = big ? '#ffffff' : HIT_COLORS[e.c] || '#fff';
         ctx.lineWidth = 6;
         ctx.stroke();
       }
@@ -630,7 +774,7 @@
     const now = performance.now();
     for (let i = effects.length - 1; i >= 0; i--) {
       const e = effects[i];
-      const t = (now - e.t) / (e.k === 'ko' ? 800 : 280);
+      const t = (now - e.t) / (e.k === 'ko' ? 800 : e.k === 'ctr' ? 380 : 280);
       if (t > 1) { effects.splice(i, 1); continue; }
       if (e.k !== 'ko' || t < 0) continue;
       const sx = Math.max(40, Math.min(W - 40, W / 2 + (e.x - cam.x) * cam.s));
