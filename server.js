@@ -229,7 +229,7 @@ function applyHit(att, tgt, hx, hy, h, events, o) {
     const dirX = o.dirX !== undefined ? o.dirX : att.f;
     tgt.vx = dirX * kb * Math.cos(ang);
     tgt.vy = -kb * Math.sin(ang);
-    tgt.stun = Math.min(70, Math.floor(kb / 18));
+    tgt.stun = Math.min(52, Math.floor(kb / 24));
   }
   tgt.g = false;
   tgt.hang = 0;
@@ -359,7 +359,7 @@ const MOVES = {
   }),
   // 必殺・地上: 水の弾を飛ばす
   bsg: {
-    style: 'shoot', total: 34,
+    style: 'shoot', total: 48,
     act(p, t, fx) {
       if (t === 10) {
         const R = pickR(p, 'h');
@@ -520,7 +520,7 @@ const MOVES = {
       const a = p.atk;
       if (a.d.counterDone && inWin(t, 36, 10)) {
         const R = pickR(p, 'h');
-        fx.hit('c', circ(frontX(p, R * 0.6), midY(p), R * 1.4 + 30), H(14, 420, 14, 40));
+        fx.hit('c', circ(p.x, p.y - p.bh * 0.5, p.bw / 2 + R * 1.4 + 30), H(14, 420, 14, 40));
       }
     },
   },
@@ -558,7 +558,7 @@ const MOVES = {
   },
   // 必殺・地上: 地面を叩いて、左右に衝撃波
   osg: {
-    style: 'slam', total: 34, segs: [{ to: 14, style: 'charge' }, { to: 34, style: 'slam' }],
+    style: 'slam', total: 48, segs: [{ to: 14, style: 'charge' }, { to: 48, style: 'slam' }],
     act(p, t, fx) {
       const R = pickR(p, 'h');
       if (t === 14) {
