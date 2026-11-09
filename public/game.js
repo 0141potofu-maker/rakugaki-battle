@@ -42,9 +42,9 @@
   let myVote = false;  // 「もういちど」を押した
   const effects = [];  // ヒットや撃墜のエフェクト
   const SLOT_COLORS = ['#e5322d', '#2563e8', '#f5c518', '#ffffff'];
-  const COLOR_NAMES = ['赤', '青', '黄', '白', '黒', '灰', '橙', '水'];
-  const HIT_COLORS = ['#e5322d', '#2563e8', '#f5c518', '#ffffff', '#777777', '#9aa0a8', '#f28a1d', '#4fc3f7'];
-  const COLOR_CSS = ['#e5322d', '#2563e8', '#f5c518', '#ffffff', '#151515', '#8d939c', '#f28a1d', '#4fc3f7'];
+  const COLOR_NAMES = ['赤', '青', '黄', '白', '黒', '灰', '橙', '水', '緑', '紫'];
+  const HIT_COLORS = ['#e5322d', '#2563e8', '#f5c518', '#ffffff', '#777777', '#9aa0a8', '#f28a1d', '#4fc3f7', '#3da64a', '#8e44c8'];
+  const COLOR_CSS = ['#e5322d', '#2563e8', '#f5c518', '#ffffff', '#151515', '#8d939c', '#f28a1d', '#4fc3f7', '#3da64a', '#8e44c8'];
   const fxList = [];   // 技の当たり判定の見た目 {sh, t}
   let projs = [];      // 飛んでいる弾 {x,y,r,c,vx,vy,t}
   let roster = []; // [{s, r}]
@@ -611,7 +611,7 @@
       ctx.strokeStyle = 'rgba(255,255,255,0.8)';
       ctx.lineWidth = 3;
       ctx.beginPath(); ctx.arc(0, 0, r * 0.8, 0.3, 1.6); ctx.stroke();
-    } else {
+    } else if (col === 7) {
       // 水色: 氷
       ctx.fillStyle = 'rgba(79,195,247,0.78)';
       ctx.beginPath(); ctx.arc(0, 0, r, 0, Math.PI * 2); ctx.fill();
@@ -630,7 +630,112 @@
       ctx.strokeStyle = INK;
       ctx.lineWidth = 3;
       ctx.beginPath(); ctx.arc(0, 0, r, 0, Math.PI * 2); ctx.stroke();
+    } else if (col === 8) {
+      // 緑: 葉っぱ・ツル
+      ctx.fillStyle = 'rgba(61,166,74,0.9)';
+      ctx.beginPath(); ctx.arc(0, 0, r, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = 'rgba(170,230,150,0.95)';
+      ctx.beginPath(); ctx.arc(-r * 0.15, -r * 0.15, r * 0.5, 0, Math.PI * 2); ctx.fill();
+      ctx.strokeStyle = INK;
+      ctx.lineWidth = 4;
+      ctx.beginPath(); ctx.arc(0, 0, r, 0, Math.PI * 2); ctx.stroke();
+      ctx.strokeStyle = 'rgba(30,100,40,0.9)';
+      ctx.lineWidth = 3;
+      ctx.lineCap = 'round';
+      ctx.beginPath(); ctx.moveTo(-r * 0.6, r * 0.5); ctx.lineTo(r * 0.6, -r * 0.5); ctx.stroke();
+    } else {
+      // 紫: 不思議な力
+      const pul = 1 + 0.08 * Math.sin(now * 0.03 + x * 0.04);
+      ctx.fillStyle = 'rgba(112,50,170,0.88)';
+      ctx.beginPath(); ctx.arc(0, 0, r * pul, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = 'rgba(205,160,245,0.95)';
+      ctx.beginPath(); ctx.arc(0, 0, r * 0.5, 0, Math.PI * 2); ctx.fill();
+      ctx.strokeStyle = INK;
+      ctx.lineWidth = 4;
+      ctx.beginPath(); ctx.arc(0, 0, r * pul, 0, Math.PI * 2); ctx.stroke();
+      ctx.strokeStyle = 'rgba(255,255,255,0.85)';
+      ctx.lineWidth = 3;
+      ctx.lineCap = 'round';
+      for (let k = 0; k < 4; k++) {
+        const ang = (k * Math.PI) / 2 + now * 0.004;
+        ctx.beginPath();
+        ctx.moveTo(Math.cos(ang) * r * 0.55, Math.sin(ang) * r * 0.55);
+        ctx.lineTo(Math.cos(ang) * r * 0.95, Math.sin(ang) * r * 0.95);
+        ctx.stroke();
+      }
     }
+    ctx.restore();
+  }
+
+  // 葉っぱ(進む向きにそった、細長い形)
+  function drawLeaf(x, y, r, vx, vy) {
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.rotate(Math.atan2(vy, vx));
+    ctx.beginPath();
+    ctx.moveTo(-r * 1.7, 0);
+    ctx.quadraticCurveTo(0, -r * 1.1, r * 1.7, 0);
+    ctx.quadraticCurveTo(0, r * 1.1, -r * 1.7, 0);
+    ctx.closePath();
+    ctx.fillStyle = 'rgba(80,190,90,0.97)';
+    ctx.fill();
+    ctx.strokeStyle = INK;
+    ctx.lineWidth = 4;
+    ctx.lineJoin = 'round';
+    ctx.stroke();
+    ctx.strokeStyle = 'rgba(30,110,50,0.95)';
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.moveTo(-r * 1.4, 0);
+    ctx.lineTo(r * 1.4, 0);
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  // ツル(ゆらゆらした太い線)
+  function drawVine(x0, y0, x1, y1, w, now) {
+    const dx = x1 - x0;
+    const dy = y1 - y0;
+    const len = Math.hypot(dx, dy);
+    if (len < 2) return;
+    const ux = dx / len;
+    const uy = dy / len;
+    const nx = -uy;
+    const ny = ux;
+    const n = Math.max(4, Math.ceil(len / 18));
+    const pts = [];
+    for (let i = 0; i <= n; i++) {
+      const t = i / n;
+      const wob = Math.sin(t * 9 + now * 0.012) * Math.min(7, w * 0.35) * Math.min(1, t * 4);
+      pts.push([x0 + dx * t + nx * wob, y0 + dy * t + ny * wob]);
+    }
+    ctx.save();
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    const trace = () => {
+      ctx.beginPath();
+      ctx.moveTo(pts[0][0], pts[0][1]);
+      for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i][0], pts[i][1]);
+    };
+    trace(); ctx.strokeStyle = INK; ctx.lineWidth = w + 8; ctx.stroke();
+    trace(); ctx.strokeStyle = '#3da64a'; ctx.lineWidth = w; ctx.stroke();
+    trace(); ctx.strokeStyle = 'rgba(170,230,150,0.8)'; ctx.lineWidth = Math.max(2, w * 0.3); ctx.stroke();
+    // 小さな葉っぱ
+    ctx.fillStyle = '#5ac36a';
+    for (let i = 2; i < pts.length - 1; i += 3) {
+      const side = (i % 2 ? 1 : -1);
+      ctx.beginPath();
+      ctx.ellipse(pts[i][0] + nx * side * w * 0.7, pts[i][1] + ny * side * w * 0.7, w * 0.5, w * 0.28, Math.atan2(ny * side, nx * side), 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = INK;
+      ctx.lineWidth = 2;
+      ctx.stroke();
+    }
+    // 先のまるまり
+    const tip = pts[pts.length - 1];
+    ctx.fillStyle = '#3da64a';
+    ctx.beginPath(); ctx.arc(tip[0], tip[1], w * 0.7, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = INK; ctx.lineWidth = 3; ctx.stroke();
     ctx.restore();
   }
 
@@ -713,6 +818,7 @@
       const sh = f.sh;
       ctx.globalAlpha = 1 - (age / 170) * 0.6;
       if (sh[0] === 0) drawBlob(sh[1], sh[2], sh[3], sh[4], now);
+      else if (sh[0] === 2) drawVine(sh[1], sh[2], sh[3], sh[4], sh[5], now);
       else drawBolt(sh[1], sh[2], sh[3], sh[4], sh[5], now);
       ctx.globalAlpha = 1;
     }
@@ -733,6 +839,7 @@
       ctx.restore();
       if (b.k === 1) drawIcicle(x, y, b.r);
       else if (b.k === 2) drawWave(x, y, b.r, b.c, b.vx, now);
+      else if (b.k === 3) drawLeaf(x, y, b.r, b.vx, b.vy);
       else drawBlob(x, y, b.r, b.c, now);
     }
   }
