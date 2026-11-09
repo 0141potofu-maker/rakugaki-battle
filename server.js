@@ -360,7 +360,7 @@ const MOVES = {
   }),
   // 必殺・地上: 火を纏って突進
   rsg: melee({
-    style: 'dash', total: 42, lockJump: true, startup: 8, active: 18, r: 'hf',
+    style: 'dash', total: 55, lockJump: true, startup: 8, active: 18, r: 'hf',
     ctl: (p, t) => (t <= 8 ? { vx: 0 } : t <= 26 ? { vx: p.f * 880 } : null),
     shape: (p, R) => circ(frontX(p, R * 0.2), p.y - p.bh * 0.5, R * 0.9 + p.bh * 0.25),
     hit: H(12, 380, 13, 35),
@@ -424,7 +424,7 @@ const MOVES = {
   }),
   // 必殺・地上: 左右の地面に落雷
   ysg: {
-    style: 'charge', total: 52,
+    style: 'charge', total: 60,
     act(p, t, fx) {
       const a = p.atk;
       if (t === 14) {
@@ -501,7 +501,7 @@ const MOVES = {
   }),
   // 必殺・地上: 溜めてパンチ(約1秒溜める)
   ksg: {
-    style: 'punch', chargeT: 60, total: 80, lockJump: true,
+    style: 'punch', chargeT: 42, total: 80, lockJump: true,
     ctl: (p, t) => (t <= 60 ? { vx: 0 } : null),
     act(p, t, fx) {
       if (inWin(t, 60, 12)) {
@@ -572,7 +572,7 @@ const MOVES = {
   },
   // 通常・空中: 連続ヒットの突進
   ona: {
-    style: 'dash', total: 40, lockJump: true,
+    style: 'dash', total: 50, lockJump: true,
     ctl: (p, t) => (t <= 6 ? { vx: 0, vy: 0 } : t <= 28 ? { vx: p.f * 720, vy: 0 } : null),
     act(p, t, fx) {
       const R = pickR(p, 'hf');
@@ -654,7 +654,7 @@ const MOVES = {
   // ===== 緑(ツル・葉っぱ) =====
   // 通常・地上: ツルを前にのばす
   eng: {
-    style: 'shoot', total: 32,
+    style: 'shoot', total: 40,
     act(p, t, fx) {
       const R = pickR(p, 'h');
       const L = 220 + R;
@@ -687,7 +687,7 @@ const MOVES = {
   },
   // 必殺・地上: 葉っぱを3枚飛ばす
   esg: {
-    style: 'shoot', total: 48,
+    style: 'shoot', total: 55,
     act(p, t, fx) {
       if (t === 10) {
         const R = pickR(p, 'h');
@@ -791,7 +791,7 @@ const MOVES = {
   },
   // 必殺・地上: キャラのまわりに、紫のメテオが降ってくる
   psg: {
-    style: 'charge', total: 64,
+    style: 'charge', total: 80,
     act(p, t, fx) {
       const R = pickR(p, 'hf');
       const wave = t === 14 ? 1 : t === 20 ? 2 : t === 26 ? 3 : 0;
