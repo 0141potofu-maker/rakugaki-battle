@@ -10,6 +10,8 @@
     { name: '灰', css: '#8d939c', rgb: [141, 147, 156] },
     { name: '橙', css: '#f28a1d', rgb: [242, 138, 29] },
     { name: '水', css: '#4fc3f7', rgb: [79, 195, 247] },
+    { name: '緑', css: '#3da64a', rgb: [61, 166, 74] },
+    { name: '紫', css: '#8e44c8', rgb: [142, 68, 200] },
   ];
   const SIZES = [6, 14, 28];
   const SLOT_COLORS = ['#e5322d', '#2563e8', '#f5c518', '#ffffff'];
