@@ -547,7 +547,7 @@ const MOVES = {
       const a = p.atk;
       if (a.d.counterDone && inWin(t, 36, 10)) {
         const R = pickR(p, 'h');
-        fx.hit('c', circ(p,x, midY(p), p.bw / 2 + R * 1.4 + 30), H(14, 420, 14, 40));
+        fx.hit('c', circ(p,x, p.y - p.bh * 0.5, p.bw / 2 + R * 1.4 + 30), H(14, 420, 14, 40));
       }
     },
   },
