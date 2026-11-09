@@ -30,7 +30,7 @@ const STOCKS = 3;           // 残機
 const RESPAWN_FRAMES = 90;  // 撃墜されてから復活するまで(1.5秒)
 const INV_FRAMES = 150;     // 復活してからの無敵(2.5秒)
 const BUFF_FRAMES = 1200;   // 水色の強化の長さ(20秒)
-const NCOLORS = 8;          // ペンの色の数(赤 青 黄 白 黒 灰 橙 水)
+const NCOLORS = 10;         // ペンの色の数(赤 青 黄 白 黒 灰 橙 水 緑 紫)
 
 // ---------- プレイヤー ----------
 function makePlayer(slot) {
@@ -43,13 +43,13 @@ function makePlayer(slot) {
     limbs: [],     // 手足の大きさ(攻撃判定に使う)
     bw: 56, bh: 84, // キャラの大きさ(ゲーム内)
     area: 0,        // 塗ったピクセル数(体重・速さに使う)
-    colors: [0, 0, 0, 0, 0, 0, 0, 0], // 色ごとのピクセル数(赤 青 黄 白 黒 灰 橙 水)
+    colors: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], // 色ごとのピクセル数(赤 青 黄 白 黒 灰 橙 水 緑 紫)
     weight: 100,    // 体重(重いほど吹っ飛びにくい)
     speedMul: 1,    // 移動の速さの倍率
     gravMul: 1,     // 重力の倍率
     handR: 18,      // 手の大きさ(攻撃判定の大きさになる)
     footR: 18,      // 足の大きさ(攻撃判定の大きさになる)
-    colSp: 0,       // 必殺技の色(0赤 1青 2黄 3白 4黒 5灰 6橙 7水)
+    colSp: 0,       // 必殺技の色(0赤 1青 2黄 3白 4黒 5灰 6橙 7水 8緑 9紫)
     colNm: 0,       // 通常攻撃の色
     airSp: false,   // 空中必殺を使った(着地・崖つかまりで回復)
     fxAcc: [],      // 技の見た目(当たり判定の形)
@@ -101,7 +101,7 @@ function applyBody(p) {
   p.footR = fa ? limbR(fa) : 18;
 
   // いちばん多い色が必殺技、2番目に多い色が通常攻撃(同じ数なら 赤→青→黄→白→黒 の順)
-  const order = [0, 1, 2, 3, 4, 5, 6, 7].sort((x, y) => p.colors[y] - p.colors[x] || x - y);
+  const order = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9].sort((x, y) => p.colors[y] - p.colors[x] || x - y);
   p.colSp = order[0];
   p.colNm = p.colors[order[1]] > 0 ? order[1] : order[0];
 }
@@ -183,15 +183,33 @@ function circleHitsRect(cx, cy, R, r) {
   return (cx - nx) ** 2 + (cy - ny) ** 2 <= R * R;
 }
 
-// 形(円 または 四角)が、食らい判定の四角に当たっているか
+// 形(円・四角・線)が、食らい判定の四角に当たっているか
 function shapeHitsRect(sh, r) {
   if (sh.k === 'c') return circleHitsRect(sh.x, sh.y, sh.r, r);
+  if (sh.k === 'l') {
+    // 線(ツル): 線にそって、小さな円をならべて調べる
+    const len = Math.hypot(sh.x1 - sh.x0, sh.y1 - sh.y0);
+    const n = Math.max(1, Math.ceil(len / 12));
+    for (let i = 0; i <= n; i++) {
+      const px = sh.x0 + ((sh.x1 - sh.x0) * i) / n;
+      const py = sh.y0 + ((sh.y1 - sh.y0) * i) / n;
+      if (circleHitsRect(px, py, sh.w / 2, r)) return true;
+    }
+    return false;
+  }
   return !(sh.x1 < r.x0 || sh.x0 > r.x1 || sh.y1 < r.y0 || sh.y0 > r.y1);
 }
 
 // 当たったときに、エフェクトを出す場所
 function hitPoint(sh, q) {
   if (sh.k === 'c') return { x: sh.x, y: sh.y, cx: sh.x };
+  if (sh.k === 'l') {
+    // 線の上で、相手にいちばん近い点
+    const dx = sh.x1 - sh.x0, dy = sh.y1 - sh.y0;
+    const L2 = dx * dx + dy * dy || 1;
+    const t = Math.max(0, Math.min(1, ((q.x - sh.x0) * dx + (q.y - q.bh * 0.5 - sh.y0) * dy) / L2));
+    return { x: sh.x0 + dx * t, y: sh.y0 + dy * t, cx: sh.x0 };
+  }
   return {
     x: Math.max(sh.x0, Math.min(q.x, sh.x1)),
     y: Math.max(sh.y0, Math.min(q.y - q.bh * 0.5, sh.y1)),
@@ -229,7 +247,7 @@ function applyHit(att, tgt, hx, hy, h, events, o) {
     const dirX = o.dirX !== undefined ? o.dirX : att.f;
     tgt.vx = dirX * kb * Math.cos(ang);
     tgt.vy = -kb * Math.sin(ang);
-    tgt.stun = Math.min(52, Math.floor(kb / 24));
+    tgt.stun = Math.min(70, Math.floor(kb / 18));
   }
   tgt.g = false;
   tgt.hang = 0;
@@ -239,7 +257,7 @@ function applyHit(att, tgt, hx, hy, h, events, o) {
 
 // ---------- 技 ----------
 // 技の名前は「色 + 通常n/必殺s + 地上g/空中a」。例: rng=赤の通常・地上、ksa=黒の必殺・空中
-const COLOR_KEYS = ['r', 'b', 'y', 'w', 'k', 'g', 'o', 'c']; // 赤 青 黄 白 黒 灰 橙 水
+const COLOR_KEYS = ['r', 'b', 'y', 'w', 'k', 'g', 'o', 'c', 'e', 'p']; // 赤 青 黄 白 黒 灰 橙 水 緑 紫
 const H = (dmg, bkb, kbg, ang) => ({ dmg, bkb, kbg, ang });
 const JAB = H(1, 70, 0, 25); // 連続ヒットの、1発ごとの弱い当たり
 
@@ -251,14 +269,17 @@ function pickR(p, type) {
 
 const circ = (x, y, r) => ({ k: 'c', x, y, r });
 const rect = (x0, y0, x1, y1) => ({ k: 'r', x0, y0, x1, y1 });
+const line = (x0, y0, x1, y1, w) => ({ k: 'l', x0, y0, x1, y1, w }); // ツル(太さw)
 const frontX = (p, k) => p.x + p.f * (p.bw / 2 + k); // からだの前
 const midY = (p) => p.y - p.bh * 0.55;                // 胸の高さ
 const inWin = (t, from, len) => t > from && t <= from + len; // fromの次のフレームから、len フレームのあいだ
 
-// 形を、見た目用の短い配列にする([0,x,y,r,色] か [1,x0,y0,x1,y1,色])
+// 形を、見た目用の短い配列にする([0,x,y,r,色] か [1,x0,y0,x1,y1,色] か [2,x0,y0,x1,y1,太さ,色])
 function packShape(sh, col) {
   const q = (v) => Math.round(v);
-  return sh.k === 'c' ? [0, q(sh.x), q(sh.y), q(sh.r), col] : [1, q(sh.x0), q(sh.y0), q(sh.x1), q(sh.y1), col];
+  if (sh.k === 'c') return [0, q(sh.x), q(sh.y), q(sh.r), col];
+  if (sh.k === 'l') return [2, q(sh.x0), q(sh.y0), q(sh.x1), q(sh.y1), q(sh.w), col];
+  return [1, q(sh.x0), q(sh.y0), q(sh.x1), q(sh.y1), col];
 }
 
 // 技の中から使う道具(当たり判定を出す・弾を出す)
@@ -284,9 +305,15 @@ function makeFx(p, env) {
         });
       }
     },
+    // 当たり判定なしで、見た目だけ出す(瞬間移動のあとなど)
+    show(shape) {
+      p.fxAcc.push(packShape(shape, a.col));
+      if (p.fxAcc.length > 10) p.fxAcc.shift();
+    },
     proj(o) {
       env.projs.push(Object.assign({ owner: p.slot, col: a.col, life: 60, shape: 0 }, o));
     },
+    env,
   };
 }
 
@@ -359,7 +386,7 @@ const MOVES = {
   }),
   // 必殺・地上: 水の弾を飛ばす
   bsg: {
-    style: 'shoot', total: 48,
+    style: 'shoot', total: 34,
     act(p, t, fx) {
       if (t === 10) {
         const R = pickR(p, 'h');
@@ -520,7 +547,7 @@ const MOVES = {
       const a = p.atk;
       if (a.d.counterDone && inWin(t, 36, 10)) {
         const R = pickR(p, 'h');
-        fx.hit('c', circ(p.x, p.y - p.bh * 0.5, p.bw / 2 + R * 1.4 + 30), H(14, 420, 14, 40));
+        fx.hit('c', circ(frontX(p, R * 0.6), midY(p), R * 1.4 + 30), H(14, 420, 14, 40));
       }
     },
   },
@@ -558,7 +585,7 @@ const MOVES = {
   },
   // 必殺・地上: 地面を叩いて、左右に衝撃波
   osg: {
-    style: 'slam', total: 48, segs: [{ to: 14, style: 'charge' }, { to: 48, style: 'slam' }],
+    style: 'slam', total: 34, segs: [{ to: 14, style: 'charge' }, { to: 34, style: 'slam' }],
     act(p, t, fx) {
       const R = pickR(p, 'h');
       if (t === 14) {
@@ -571,7 +598,7 @@ const MOVES = {
   // 必殺・空中: 斜め上に移動して、反対側の斜め下に衝撃波
   osa: {
     style: 'dash', total: 38, lockJump: true, segs: [{ to: 21, style: 'dash' }, { to: 38, style: 'shootdown' }],
-    ctl: (p, t) => (t <= 5 ? { vx: 0, vy: 0 } : t <= 20 ? { vx: p.f * 1050, vy: -1050 } : t <= 26 ? { vx: 0, vy: 0 } : null),
+    ctl: (p, t) => (t <= 5 ? { vx: 0, vy: 0 } : t <= 20 ? { vx: p.f * 600, vy: -600 } : t <= 26 ? { vx: 0, vy: 0 } : null),
     act(p, t, fx) {
       if (t === 21) {
         const R = pickR(p, 'hf');
@@ -622,6 +649,171 @@ const MOVES = {
         fx.proj({ x: p.x, y: p.y - p.bh * 0.2, vx: 0, vy: 520, r: R * 0.4 + 10, life: 60, hit: H(6, 220, 8, -50), dx: p.f, shape: 1 });
       }
       if (t === 25) { p.vx *= 0.4; p.vy *= 0.4; }
+    },
+  },
+  // ===== 緑(ツル・葉っぱ) =====
+  // 通常・地上: ツルを前にのばす
+  eng: {
+    style: 'shoot', total: 32,
+    act(p, t, fx) {
+      const R = pickR(p, 'h');
+      const L = 220 + R;
+      const len = t <= 5 ? 0 : t <= 14 ? (L * (t - 5)) / 9 : t <= 18 ? L : 0; // のびて、もどる
+      if (len > 0) {
+        const x0 = p.x + p.f * (p.bw / 2) * 0.8;
+        const y0 = midY(p);
+        fx.hit('v', line(x0, y0, x0 + p.f * len, y0, R * 0.9 + 12), H(7, 280, 9, 38));
+      }
+    },
+  },
+  // 通常・空中: 上下左右にツルをのばして、全方位を攻撃
+  ena: {
+    style: 'up', total: 36,
+    act(p, t, fx) {
+      const R = pickR(p, 'h');
+      const L = 170 + R;
+      const len = t <= 6 ? 0 : t <= 12 ? (L * (t - 6)) / 6 : t <= 20 ? L : 0;
+      if (len > 0) {
+        const cx = p.x;
+        const cy = p.y - p.bh * 0.5;
+        const w = R * 0.8 + 10;
+        // 4本のツル(同じ idなので、1回の技で1回だけ当たる)
+        fx.hit('v', line(cx, cy, cx, cy - len, w), H(8, 300, 10, 85), { away: true });          // 上
+        fx.hit('v', line(cx, cy, cx + len, cy, w), H(8, 300, 10, 40), { away: true });          // 右
+        fx.hit('v', line(cx, cy, cx, cy + len, w), H(9, 240, 8, -65), { away: true });          // 下
+        fx.hit('v', line(cx, cy, cx - len, cy, w), H(8, 300, 10, 40), { away: true });          // 左
+      }
+    },
+  },
+  // 必殺・地上: 葉っぱを3枚飛ばす
+  esg: {
+    style: 'shoot', total: 36,
+    act(p, t, fx) {
+      if (t === 10) {
+        const R = pickR(p, 'h');
+        for (const deg of [-18, 0, 18]) {
+          const a = (deg * Math.PI) / 180;
+          fx.proj({ x: frontX(p, R * 0.4), y: midY(p), vx: p.f * 600 * Math.cos(a), vy: -600 * Math.sin(a), r: R * 0.35 + 9, life: 55, hit: H(5, 230, 7, 35), dx: p.f, shape: 3 });
+        }
+      }
+    },
+  },
+  // 必殺・空中: ツルをのばして、崖に届いたら、キャラも崖をつかむ
+  esa: {
+    style: 'shoot', total: 52, lockJump: true,
+    ctl: (p, t) => {
+      const d = p.atk.d;
+      if (d.pull) {
+        const dx = d.pull.x - p.x;
+        const dy = d.pull.y - p.y;
+        const dist = Math.hypot(dx, dy) || 1;
+        return { vx: (dx / dist) * 1200, vy: (dy / dist) * 1200 }; // 崖へ引きよせられる
+      }
+      return t <= 5 ? { vx: 0, vy: 0 } : null;
+    },
+    act(p, t, fx) {
+      const a = p.atk;
+      const d = a.d;
+      const half = STAGE.w / 2;
+      const R = pickR(p, 'h');
+      const L = 400;
+      const w = R * 0.8 + 10;
+      const ox = p.x;
+      const oy = p.y - p.bh * 0.5;
+      if (t === 6) {
+        // 近くの崖があれば、そのほうへ。なければ、斜め上へ
+        let best = null;
+        for (const s of [-1, 1]) {
+          const occupied = fx.env.occ[s] !== undefined && fx.env.occ[s] !== p.slot;
+          const dist = Math.hypot(s * half - ox, STAGE.top - oy);
+          if (!occupied && oy >= STAGE.top - 40 && dist <= L + 20 && (!best || dist < best.dist)) best = { s, dist };
+        }
+        if (best) {
+          const dx = best.s * half - ox;
+          const dy = STAGE.top - oy;
+          const dd = Math.hypot(dx, dy) || 1;
+          d.dir = { x: dx / dd, y: dy / dd };
+          d.target = best;
+        } else {
+          d.dir = { x: p.f * Math.SQRT1_2, y: -Math.SQRT1_2 };
+        }
+        d.len = 0;
+      }
+      if (!d.dir) return;
+      if (!d.pull && t >= 6 && t <= 22) {
+        d.len = Math.min(L, (L * (t - 5)) / 10); // のびていく
+        fx.hit('v', line(ox, oy, ox + d.dir.x * d.len, oy + d.dir.y * d.len, w), H(5, 220, 6, 50));
+        if (d.target && d.len >= d.target.dist - 24) {
+          const s = d.target.s;
+          d.pull = { x: s * (half + p.bw / 2), y: STAGE.top + p.bh + 6, s }; // 崖をつかんだ!
+          d.pullT = t;
+        }
+      }
+      if (d.pull) {
+        fx.show(line(ox, oy, d.target ? d.target.s * half : ox, STAGE.top, w)); // 崖までのツル
+        if (Math.hypot(d.pull.x - p.x, d.pull.y - p.y) < 35 || t > d.pullT + 14) {
+          // 崖につかまる
+          const s = d.pull.s;
+          p.hang = s;
+          p.hangT = 0;
+          p.airJump = false;
+          p.airSp = false;
+          p.atk = null;
+          p.vx = 0;
+          p.vy = 0;
+          fx.env.occ[s] = p.slot;
+        }
+      }
+    },
+  },
+
+  // ===== 紫(周囲・メテオ・瞬間移動) =====
+  // 通常・地上: キャラのまわりに連続ヒット
+  png: {
+    style: 'spin', total: 44,
+    act(p, t, fx) {
+      const R = pickR(p, 'hf');
+      const shape = circ(p.x, p.y - p.bh / 2, Math.max(p.bw, p.bh) / 2 + R * 0.5 + 10);
+      if (t > 6 && t <= 30 && (t - 7) % 4 === 0) fx.hit('m' + t, shape, JAB, { carry: { vx: 0, vy: 0 } });
+      if (t >= 31 && t <= 35) fx.hit('fin', shape, H(3, 300, 8, 45), { away: true });
+    },
+  },
+  // 通常・空中: 下に紫の弾を放って、少し上昇
+  pna: {
+    style: 'shootdown', total: 36, lockJump: true,
+    ctl: (p, t) => (t >= 7 && t <= 9 ? { vy: -700 } : null),
+    act(p, t, fx) {
+      if (t === 7) {
+        const R = pickR(p, 'h');
+        fx.proj({ x: p.x, y: p.y - p.bh * 0.2, vx: 0, vy: 760, r: R * 0.6 + 10, life: 45, hit: H(7, 200, 8, -65), dx: p.f });
+      }
+    },
+  },
+  // 必殺・地上: キャラのまわりに、紫のメテオが降ってくる
+  psg: {
+    style: 'charge', total: 64,
+    act(p, t, fx) {
+      const R = pickR(p, 'hf');
+      const wave = t === 14 ? 1 : t === 20 ? 2 : t === 26 ? 3 : 0;
+      if (wave) {
+        for (const side of [-1, 1]) {
+          fx.proj({ x: p.x + side * (wave * (p.bw / 2 + 70)), y: p.y - 520, vx: 0, vy: 900, r: R * 0.6 + 22, life: 40, hit: H(9, 260, 9, -70), dx: side, away: true });
+        }
+      }
+    },
+  },
+  // 必殺・空中: 上に瞬間移動
+  psa: {
+    style: 'up', total: 30, lockJump: true,
+    ctl: (p, t) => (t <= 12 ? { vx: 0, vy: 0 } : null),
+    act(p, t, fx) {
+      if (t === 8) {
+        fx.show(circ(p.x, p.y - p.bh * 0.5, Math.max(p.bw, p.bh) * 0.6 + 14)); // 消えるところ
+        p.y = Math.max(BLAST.top + 300, p.y - 340);                              // 上へ
+        p.vy = 0;
+        p.inv = Math.max(p.inv, 14);
+        fx.show(circ(p.x, p.y - p.bh * 0.5, Math.max(p.bw, p.bh) * 0.6 + 14));   // 現れるところ
+      }
     },
   },
 };
@@ -676,7 +868,8 @@ function stepProjectiles(r, alive) {
         if (q.slot === b.owner || q.life !== 0 || q.inv > 0 || q.hang) continue;
         if (circleHitsRect(b.x, b.y, b.r, hurtRect(q))) {
           if (!tryCounter(null, q, b.x, r.events)) {
-            applyHit({ f: b.dx }, q, b.x, b.y, b.hit, r.events, { dirX: b.dx, col: b.col });
+            const dirX = b.away ? (q.x >= b.x ? 1 : -1) : b.dx;
+            applyHit({ f: b.dx }, q, b.x, b.y, b.hit, r.events, { dirX, col: b.col });
           }
           dead = true;
           break;
@@ -1097,7 +1290,7 @@ setInterval(() => {
     const alive = present.filter((p) => p.life === 0);
     const occ = {}; // 崖ごとに、つかまっている人
     for (const p of alive) if (p.hang) occ[p.hang] = p.slot;
-    const env = { others: alive, events: r.events, projs: r.projs };
+    const env = { others: alive, events: r.events, projs: r.projs, occ };
     for (const p of alive) step(p, occ, env);
     stepProjectiles(r, alive);
     for (const p of alive) if (p.ko) koPlayer(r, p, r.events);
