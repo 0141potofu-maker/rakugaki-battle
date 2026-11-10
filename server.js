@@ -501,7 +501,7 @@ const MOVES = {
   }),
   // 必殺・地上: 溜めてパンチ(約1秒溜める)
   ksg: {
-    style: 'punch', chargeT: 42, total: 80, lockJump: true,
+    style: 'punch', chargeT: 60, total: 80, lockJump: true,
     ctl: (p, t) => (t <= 60 ? { vx: 0 } : null),
     act(p, t, fx) {
       if (inWin(t, 60, 12)) {
@@ -700,7 +700,7 @@ const MOVES = {
   },
   // 必殺・空中: ツルをのばして、崖に届いたら、キャラも崖をつかむ
   esa: {
-    style: 'shoot', total: 52, lockJump: true,
+    style: 'shoot', total: 80, lockJump: true,
     ctl: (p, t) => {
       const d = p.atk.d;
       if (d.pull) {
@@ -716,7 +716,7 @@ const MOVES = {
       const d = a.d;
       const half = STAGE.w / 2;
       const R = pickR(p, 'h');
-      const L = 400;
+      const L = 700;
       const w = R * 0.8 + 10;
       const ox = p.x;
       const oy = p.y - p.bh * 0.5;
@@ -751,7 +751,7 @@ const MOVES = {
       }
       if (d.pull) {
         fx.show(line(ox, oy, d.target ? d.target.s * half : ox, STAGE.top, w)); // 崖までのツル
-        if (Math.hypot(d.pull.x - p.x, d.pull.y - p.y) < 35 || t > d.pullT + 14) {
+        if (Math.hypot(d.pull.x - p.x, d.pull.y - p.y) < 35 || t > d.pullT + 40) {
           // 崖につかまる
           const s = d.pull.s;
           p.hang = s;
