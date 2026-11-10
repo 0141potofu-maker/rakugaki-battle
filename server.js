@@ -360,7 +360,7 @@ const MOVES = {
   }),
   // 必殺・地上: 火を纏って突進
   rsg: melee({
-    style: 'dash', total: 55, lockJump: true, startup: 8, active: 18, r: 'hf',
+    style: 'dash', total: 60, lockJump: true, startup: 8, active: 18, r: 'hf',
     ctl: (p, t) => (t <= 8 ? { vx: 0 } : t <= 26 ? { vx: p.f * 880 } : null),
     shape: (p, R) => circ(frontX(p, R * 0.2), p.y - p.bh * 0.5, R * 0.9 + p.bh * 0.25),
     hit: H(12, 380, 13, 35),
@@ -424,7 +424,7 @@ const MOVES = {
   }),
   // 必殺・地上: 左右の地面に落雷
   ysg: {
-    style: 'charge', total: 60,
+    style: 'charge', total: 65,
     act(p, t, fx) {
       const a = p.atk;
       if (t === 14) {
@@ -585,7 +585,7 @@ const MOVES = {
   },
   // 必殺・地上: 地面を叩いて、左右に衝撃波
   osg: {
-    style: 'slam', total: 48, segs: [{ to: 14, style: 'charge' }, { to: 48, style: 'slam' }],
+    style: 'slam', total: 55, segs: [{ to: 14, style: 'charge' }, { to: 48, style: 'slam' }],
     act(p, t, fx) {
       const R = pickR(p, 'h');
       if (t === 14) {
@@ -610,7 +610,7 @@ const MOVES = {
   // ===== 水色(氷・強化) =====
   // 通常・地上: 蹴りながら突進
   cng: melee({
-    style: 'kick', total: 28, startup: 5, active: 11, r: 'f',
+    style: 'kick', total: 35, startup: 5, active: 11, r: 'f',
     ctl: (p, t) => (t > 4 && t <= 16 ? { vx: p.f * 650 } : null),
     shape: (p, R) => circ(frontX(p, R * 0.5), p.y - p.bh * 0.25, R), hit: H(8, 300, 10, 40),
   }),
@@ -654,7 +654,7 @@ const MOVES = {
   // ===== 緑(ツル・葉っぱ) =====
   // 通常・地上: ツルを前にのばす
   eng: {
-    style: 'shoot', total: 40,
+    style: 'shoot', total: 45,
     act(p, t, fx) {
       const R = pickR(p, 'h');
       const L = 220 + R;
@@ -687,7 +687,7 @@ const MOVES = {
   },
   // 必殺・地上: 葉っぱを3枚飛ばす
   esg: {
-    style: 'shoot', total: 55,
+    style: 'shoot', total: 60,
     act(p, t, fx) {
       if (t === 10) {
         const R = pickR(p, 'h');
@@ -780,7 +780,7 @@ const MOVES = {
   },
   // 通常・空中: 下に紫の弾を放って、少し上昇
   pna: {
-    style: 'shootdown', total: 48, lockJump: true,
+    style: 'shootdown', total: 40, lockJump: true,
     ctl: (p, t) => (t >= 7 && t <= 9 ? { vy: -700 } : null),
     act(p, t, fx) {
       if (t === 7) {
@@ -791,7 +791,7 @@ const MOVES = {
   },
   // 必殺・地上: キャラのまわりに、紫のメテオが降ってくる
   psg: {
-    style: 'charge', total: 80,
+    style: 'charge', total: 100,
     act(p, t, fx) {
       const R = pickR(p, 'hf');
       const wave = t === 14 ? 1 : t === 20 ? 2 : t === 26 ? 3 : 0;
