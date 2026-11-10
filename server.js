@@ -440,7 +440,7 @@ const MOVES = {
   // 必殺・空中: 向いている方向の斜め上に、高速で突進
   ysa: melee({
     style: 'dash', total: 36, lockJump: true, startup: 6, active: 16, r: 'hf',
-    ctl: (p, t) => (t <= 6 ? { vx: 0, vy: 0 } : t <= 22 ? { vx: p.f * 900, vy: -1500 } : null),
+    ctl: (p, t) => (t <= 6 ? { vx: 0, vy: 0 } : t <= 22 ? { vx: p.f * 1500, vy: -850 } : null),
     shape: (p, R) => circ(p.x + p.f * p.bw * 0.25, p.y - p.bh * 0.5, R * 0.9 + p.bh * 0.25),
     hit: H(9, 320, 10, 45),
     post: (p, t) => { if (t === 23) { p.vx *= 0.4; p.vy *= 0.4; } },
@@ -513,7 +513,7 @@ const MOVES = {
   // 必殺・空中: 溜めて横に突進(約0.7秒溜める)
   ksa: {
     style: 'dash', chargeT: 42, total: 76, lockJump: true,
-    ctl: (p, t) => (t <= 42 ? { vx: 0, vy: 100 } : t <= 62 ? { vx: p.f * 1400, vy: 0 } : null),
+    ctl: (p, t) => (t <= 42 ? { vx: 0, vy: 100 } : t <= 62 ? { vx: p.f * 1750, vy: 100 } : null),
     act(p, t, fx) {
       if (inWin(t, 42, 20)) {
         const R = pickR(p, 'hf');
