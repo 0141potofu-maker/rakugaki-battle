@@ -513,7 +513,7 @@ const MOVES = {
   // 必殺・空中: 溜めて横に突進(約0.7秒溜める)
   ksa: {
     style: 'dash', chargeT: 42, total: 76, lockJump: true,
-    ctl: (p, t) => (t <= 42 ? { vx: 0, vy: 100 } : t <= 62 ? { vx: p.f * 1750, vy: 100 } : null),
+    ctl: (p, t) => (t <= 42 ? { vx: 0, vy: 100 } : t <= 62 ? { vx: p.f * 1750, vy: -200 } : null),
     act(p, t, fx) {
       if (inWin(t, 42, 20)) {
         const R = pickR(p, 'hf');
