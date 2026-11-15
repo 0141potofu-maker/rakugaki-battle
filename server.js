@@ -506,7 +506,7 @@ const MOVES = {
     act(p, t, fx) {
       if (inWin(t, 60, 12)) {
         const R = pickR(p, 'h');
-        fx.hit('a', circ(frontX(p, R * 0.6), midY(p), R * 1.3 + 10), H(20, 450, 16, 35));
+        fx.hit('a', circ(frontX(p, R * 0.6), midY(p), R * 1.3 + 10), H(30, 450, 16, 35));
       }
     },
   },
@@ -517,7 +517,7 @@ const MOVES = {
     act(p, t, fx) {
       if (inWin(t, 42, 20)) {
         const R = pickR(p, 'hf');
-        fx.hit('a', circ(p.x + p.f * p.bw * 0.25, p.y - p.bh * 0.5, R + p.bh * 0.3), H(16, 420, 14, 35));
+        fx.hit('a', circ(p.x + p.f * p.bw * 0.25, p.y - p.bh * 0.5, R + p.bh * 0.3), H(20, 420, 14, 35));
       }
       if (t === 63) p.vx *= 0.3;
     },
@@ -526,15 +526,15 @@ const MOVES = {
   // 通常・地上: パンチ
   gng: melee({
     style: 'punch', total: 20, startup: 4, active: 5, r: 'h',
-    shape: (p, R) => circ(frontX(p, R * 0.5), midY(p), R), hit: H(7, 280, 9, 38),
+    shape: (p, R) => circ(frontX(p, R * 0.5), midY(p), R), hit: H(8, 280, 9, 38),
   }),
   // 通常・空中: 左右にパンチとキック(パンチのあと、うしろを向いてキック)
   gna: {
     style: 'punch', total: 28, segs: [{ to: 13, style: 'punch' }, { to: 28, style: 'kick' }],
     act(p, t, fx) {
-      if (inWin(t, 4, 5)) fx.hit('p', circ(frontX(p, pickR(p, 'h') * 0.5), midY(p), pickR(p, 'h')), H(6, 260, 8, 40));
+      if (inWin(t, 4, 5)) fx.hit('p', circ(frontX(p, pickR(p, 'h') * 0.5), midY(p), pickR(p, 'h')), H(8, 260, 8, 40));
       if (t === 13) p.f = -p.f;
-      if (inWin(t, 13, 6)) fx.hit('k', circ(frontX(p, pickR(p, 'f') * 0.5), p.y - p.bh * 0.35, pickR(p, 'f')), H(7, 300, 10, 40));
+      if (inWin(t, 13, 6)) fx.hit('k', circ(frontX(p, pickR(p, 'f') * 0.5), p.y - p.bh * 0.35, pickR(p, 'f')), H(9, 300, 10, 40));
     },
   },
   // 必殺・地上: カウンター(構えている間に攻撃を受けると、止めて反撃する)
@@ -580,7 +580,7 @@ const MOVES = {
         fx.hit('m' + t, circ(p.x + p.f * p.bw * 0.3, p.y - p.bh * 0.5, R * 0.9 + p.bh * 0.25), JAB, { carry: { vx: p.f * 720, vy: 0 } });
       }
       if (t === 29) p.vx *= 0.3;
-      if (t >= 29 && t <= 33) fx.hit('fin', circ(p.x + p.f * p.bw * 0.35, p.y - p.bh * 0.5, R * 1.1 + p.bh * 0.25), H(3, 320, 8, 40));
+      if (t >= 29 && t <= 33) fx.hit('fin', circ(p.x + p.f * p.bw * 0.35, p.y - p.bh * 0.5, R * 1.1 + p.bh * 0.25), H(2, 300, 8, 40));
     },
   },
   // 必殺・地上: 地面を叩いて、左右に衝撃波
@@ -646,7 +646,7 @@ const MOVES = {
     act(p, t, fx) {
       const R = pickR(p, 'h');
       if (t >= 8 && t <= 23 && (t - 8) % 3 === 0) {
-        fx.proj({ x: p.x, y: p.y - p.bh * 0.2, vx: 0, vy: 520, r: R * 0.4 + 10, life: 60, hit: H(6, 220, 8, -50), dx: p.f, shape: 1 });
+        fx.proj({ x: p.x, y: p.y - p.bh * 0.2, vx: 0, vy: 520, r: R * 0.4 + 10, life: 60, hit: H(4, 220, 8, -50), dx: p.f, shape: 1 });
       }
       if (t === 25) { p.vx *= 0.4; p.vy *= 0.4; }
     },
@@ -775,7 +775,7 @@ const MOVES = {
       const R = pickR(p, 'hf');
       const shape = circ(p.x, p.y - p.bh / 2, Math.max(p.bw, p.bh) / 2 + R * 0.5 + 10);
       if (t > 6 && t <= 30 && (t - 7) % 4 === 0) fx.hit('m' + t, shape, JAB, { carry: { vx: 0, vy: 0 } });
-      if (t >= 31 && t <= 35) fx.hit('fin', shape, H(3, 300, 8, 45), { away: true });
+      if (t >= 31 && t <= 35) fx.hit('fin', shape, H(2, 300, 10, 45), { away: true });
     },
   },
   // 通常・空中: 下に紫の弾を放って、少し上昇
