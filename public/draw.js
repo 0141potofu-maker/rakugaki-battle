@@ -13,8 +13,14 @@
     { name: '緑', css: '#3da64a', rgb: [61, 166, 74] },
     { name: '紫', css: '#8e44c8', rgb: [142, 68, 200] },
   ];
+  // 色ごとの技のイメージ(色の割合の表示に使う)
+  const ELEMS = ['火', '水', '雷', '連続', '溜め', 'カウンター', '衝撃波', '氷', 'ツル', 'メテオ'];
   const SIZES = [6, 14, 28];
   const SLOT_COLORS = ['#e5322d', '#2563e8', '#f5c518', '#ffffff'];
+
+  // ほぞんしたキャラ(このブラウザの中にだけ、のこる)
+  const SAVE_KEY = 'rakugaki-battle.chars.v1';
+  const SAVE_MAX = 8;
 
   let handlers = {};
   let colorIdx = 0;
@@ -50,6 +56,11 @@
 .dp-s { width: 52px; height: 44px; display: flex; align-items: center; justify-content: center; }
 .dp-s i { display: block; background: #151515; border-radius: 50%; }
 .dp-submit { font-size: 20px; background: #7bdc6a; padding: 12px; margin-top: auto; }
+.dp-stats { background: #fff; border: 3px solid #151515; border-radius: 10px; padding: 6px 8px; font-size: 12px; font-weight: 700; line-height: 1.45; }
+.dp-bar { display: flex; height: 14px; border: 2px solid #151515; border-radius: 6px; overflow: hidden; background: #e6e6e6; margin-bottom: 4px; }
+.dp-bar i { display: block; height: 100%; box-shadow: inset -1px 0 0 rgba(0,0,0,.35); }
+#dp-mv b { font-size: 13px; }
+#dp-pct, #dp-body { opacity: .75; }
 #dp-wait { flex: 1; min-height: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; text-align: center; }
 #dp-prev { max-width: 70%; max-height: 38vh; min-width: 60px; min-height: 60px; object-fit: contain; border: 3px solid #151515; border-radius: 8px; background-color: #c9ced3; image-rendering: auto; }
 #dp-hint { font-size: 16px; font-weight: 700; max-width: 90%; }
@@ -60,12 +71,22 @@
   background-size: 28px 28px; background-position: 0 0, 14px 14px; image-rendering: pixelated; }
 #dp-lprev { width: 140px; height: 140px; align-self: center; flex: none; }
 #dp-ltext { font-size: 14px; font-weight: 700; line-height: 1.4; }
-#dp-msg { position: absolute; left: 50%; bottom: 24px; transform: translateX(-50%); background: #151515; color: #fff; border-radius: 10px; padding: 8px 14px; font-size: 14px; opacity: 0; transition: opacity .2s; pointer-events: none; }
+#dp-saved { position: absolute; inset: 0; z-index: 5; background: #cfe3f2; display: flex; flex-direction: column; gap: 10px; overflow-y: auto;
+  padding: calc(10px + env(safe-area-inset-top, 0px)) calc(10px + env(safe-area-inset-right, 0px)) calc(10px + env(safe-area-inset-bottom, 0px)) calc(10px + env(safe-area-inset-left, 0px)); }
+#dp-saved[hidden] { display: none; }
+#dp-slist { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; }
+.dp-card { background: #fff; border: 3px solid #151515; border-radius: 12px; padding: 8px; display: flex; flex-direction: column; gap: 6px; align-items: center; }
+.dp-card img { max-width: 100%; height: 110px; object-fit: contain; border-radius: 6px; background-color: #c9ced3; }
+.dp-card .row { display: flex; gap: 6px; flex-wrap: wrap; justify-content: center; }
+.dp-card .btn { padding: 6px 9px; font-size: 13px; }
+#dp-sempty { font-size: 15px; font-weight: 700; opacity: .75; }
+#dp-msg { position: absolute; left: 50%; bottom: 24px; transform: translateX(-50%); background: #151515; color: #fff; border-radius: 10px; padding: 8px 14px; font-size: 14px; opacity: 0; transition: opacity .2s; pointer-events: none; z-index: 9; }
 #dp-msg.show { opacity: 1; }
 @media (orientation: portrait) {
   .dp-main { flex-direction: column; }
   .dp-tools { width: auto; flex-direction: row; flex-wrap: wrap; overflow-y: auto; max-height: 38%; align-content: flex-start; }
   .dp-submit { margin-top: 0; }
+  .dp-stats { width: 100%; }
 }
 `;
   document.head.appendChild(style);
@@ -82,6 +103,12 @@
 <div class="dp-main" id="dp-draw">
   <div class="dp-stage" id="dp-stage"><canvas id="dp-cv" width="${SIZE}" height="${SIZE}"></canvas></div>
   <div class="dp-tools">
+    <div class="dp-stats">
+      <div class="dp-bar" id="dp-bar"></div>
+      <div id="dp-mv"></div>
+      <div id="dp-pct"></div>
+      <div id="dp-body"></div>
+    </div>
     <div class="dp-row">${PALETTE.map((c, i) => `<button class="dp-color" data-c="${i}" style="background:${c.css}" aria-label="${c.name}"></button>`).join('')}</div>
     <div class="dp-row">
       <button class="btn" data-t="pen">ペン</button>
@@ -93,6 +120,7 @@
       <button class="btn" data-a="undo">もどす</button>
       <button class="btn" data-a="clear">ぜんぶけす</button>
     </div>
+    <button class="btn" data-a="saved">ほぞんしたキャラ</button>
     <button class="btn dp-submit" data-a="submit">かけた！</button>
   </div>
 </div>
@@ -122,6 +150,14 @@
     <button class="btn" data-a="redraw">かきなおす</button>
     <button class="btn dp-submit" data-a="start" id="dp-start">はじめる</button>
   </div>
+</div>
+<div id="dp-saved" hidden>
+  <div class="dp-top">
+    <div class="dp-title">ほぞんしたキャラ</div>
+    <button class="btn" data-a="savedclose">とじる</button>
+  </div>
+  <div id="dp-sempty" hidden>まだ、ほぞんされたキャラはいないよ。キャラを決めると、自動でほぞんされるよ。</div>
+  <div id="dp-slist"></div>
 </div>
 <div id="dp-msg"></div>
 `;
@@ -212,6 +248,40 @@
     ctx.putImageData(id, 0, 0);
   }
 
+  // ---------- 色の割合の表示(技が何になるか) ----------
+  function updateStats() {
+    const d = ctx.getImageData(0, 0, SIZE, SIZE).data;
+    const counts = new Array(PALETTE.length).fill(0);
+    let area = 0;
+    for (let i = 0; i < d.length; i += 4) {
+      if (d[i + 3] < 128) continue;
+      area++;
+      counts[nearest(d[i], d[i + 1], d[i + 2])]++;
+    }
+    if (!area) {
+      $('dp-bar').innerHTML = '';
+      $('dp-mv').textContent = '色をぬると、技が決まるよ';
+      $('dp-pct').textContent = '';
+      $('dp-body').textContent = '';
+      return;
+    }
+    $('dp-bar').innerHTML = counts
+      .map((n, i) => (n ? `<i style="width:${((n * 100) / area).toFixed(2)}%;background:${PALETTE[i].css}"></i>` : ''))
+      .join('');
+    // サーバーと同じ決めかた: いちばん多い色=必殺、2番目=通常(同じ数なら 赤→青→…の順)
+    const order = counts.map((_, i) => i).sort((a, b) => counts[b] - counts[a] || a - b);
+    const sp = order[0];
+    const nm = counts[order[1]] > 0 ? order[1] : order[0];
+    $('dp-mv').innerHTML = `ひっさつ <b>${PALETTE[sp].name}(${ELEMS[sp]})</b> / つうじょう <b>${PALETTE[nm].name}(${ELEMS[nm]})</b>`;
+    $('dp-pct').textContent = order
+      .filter((i) => counts[i] > 0)
+      .slice(0, 4)
+      .map((i) => `${PALETTE[i].name}${Math.round((counts[i] * 100) / area)}%`)
+      .join(' ');
+    const t = Math.max(0, Math.min(1, (Math.log(Math.max(area, 1)) - Math.log(400)) / (Math.log(40000) - Math.log(400))));
+    $('dp-body').textContent = `おもさ ${Math.round(70 + 70 * t)} / はやさ ×${(1.35 - 0.65 * t).toFixed(2)}`;
+  }
+
   // かいた絵を調べる(大きさ・面積・色ごとのピクセル数)して、まわりの透明部分を切り取る
   function analyze() {
     const d = ctx.getImageData(0, 0, SIZE, SIZE).data;
@@ -294,6 +364,7 @@
     if (tool === 'fill') {
       pushUndo();
       floodFill(Math.floor(p.x), Math.floor(p.y), colorIdx);
+      updateStats();
       return;
     }
     cv.setPointerCapture(e.pointerId);
@@ -332,6 +403,7 @@
     sctx.putImageData(id, 0, 0);
     showStroke();
     harden();
+    updateStats();
   };
   cv.addEventListener('pointerup', endStroke);
   cv.addEventListener('pointercancel', endStroke);
@@ -492,30 +564,122 @@
   lcv.addEventListener('pointerup', endL);
   lcv.addEventListener('pointercancel', endL);
 
+  // ---------- ほぞんしたキャラ ----------
+  function readSaved() {
+    try {
+      const j = JSON.parse(localStorage.getItem(SAVE_KEY) || '[]');
+      return Array.isArray(j) ? j : [];
+    } catch (err) {
+      return [];
+    }
+  }
+  // 入りきらないときは、ふるいものから消してほぞんする
+  function writeSaved(list) {
+    const l = list.slice(0, SAVE_MAX);
+    for (;;) {
+      try {
+        localStorage.setItem(SAVE_KEY, JSON.stringify(l));
+        return l;
+      } catch (err) {
+        if (l.length <= 1) return l;
+        l.pop();
+      }
+    }
+  }
+  function saveChar(entry) {
+    // 同じ絵(見た目も、色の数も、大きさも同じ)は、新しいほうだけ残す
+    const same = (x) =>
+      x.img === entry.img ||
+      (x.area === entry.area && JSON.stringify(x.c) === JSON.stringify(entry.c) && x.rig && entry.rig && x.rig.w === entry.rig.w && x.rig.h === entry.rig.h);
+    const list = readSaved().filter((x) => !same(x));
+    list.unshift(entry);
+    writeSaved(list);
+  }
+  function renderSaved() {
+    const list = readSaved();
+    $('dp-sempty').hidden = list.length > 0;
+    $('dp-slist').innerHTML = list
+      .map(
+        (e) => `<div class="dp-card"><img src="${e.img}" alt="ほぞんキャラ">
+<div class="row"><button class="btn" data-sv="use" data-id="${e.id}">つかう</button><button class="btn" data-sv="edit" data-id="${e.id}">なおす</button><button class="btn" data-sv="del" data-id="${e.id}">けす</button></div></div>`
+      )
+      .join('');
+  }
+  function openSaved() {
+    renderSaved();
+    $('dp-saved').hidden = false;
+  }
+  function closeSaved() {
+    $('dp-saved').hidden = true;
+  }
+  function useSaved(id) {
+    const e = readSaved().find((x) => x.id === id);
+    if (!e) return;
+    closeSaved();
+    $('dp-prev').src = e.img;
+    saveChar(e); // いちばん前にならべなおす
+    if (handlers.onSubmit) handlers.onSubmit({ rig: e.rig, area: e.area, c: e.c, img: e.img });
+  }
+  // えにもどして、なおせるようにする
+  function editSaved(id) {
+    const e = readSaved().find((x) => x.id === id);
+    if (!e) return;
+    const im = new Image();
+    im.onload = () => {
+      pushUndo();
+      ctx.clearRect(0, 0, SIZE, SIZE);
+      ctx.drawImage(im, Math.round((SIZE - im.width) / 2), Math.max(0, Math.round(SIZE - im.height - 4)));
+      harden();
+      updateStats();
+      closeSaved();
+      setMode('draw');
+    };
+    im.src = e.img;
+  }
+  function deleteSaved(id) {
+    writeSaved(readSaved().filter((x) => x.id !== id));
+    renderSaved();
+  }
+
   function finishLimb(skip) {
     const rig = Rig.build(limb.crop, skip ? null : limb.mask);
     if (!rig) return msg('からだの部分も残してね');
     $('dp-prev').src = limb.img;
-    if (handlers.onSubmit) handlers.onSubmit({ rig: Rig.serialize(rig), area: limb.area, c: limb.c, img: limb.img });
+    const ser = Rig.serialize(rig);
+    saveChar({ id: String(Date.now()), img: limb.img, rig: ser, area: limb.area, c: limb.c });
+    if (handlers.onSubmit) handlers.onSubmit({ rig: ser, area: limb.area, c: limb.c, img: limb.img });
   }
 
   // ---------- ボタン ----------
   root.addEventListener('click', (e) => {
-    const b = e.target.closest('[data-c],[data-t],[data-s],[data-a],[data-lt],[data-ls]');
+    const b = e.target.closest('[data-c],[data-t],[data-s],[data-a],[data-lt],[data-ls],[data-sv]');
     if (!b) return;
     if (b.dataset.c !== undefined) { colorIdx = +b.dataset.c; if (tool === 'eraser') tool = 'pen'; refreshSel(); return; }
     if (b.dataset.t !== undefined) { tool = b.dataset.t; refreshSel(); return; }
     if (b.dataset.s !== undefined) { sizeIdx = +b.dataset.s; refreshSel(); return; }
     if (b.dataset.lt !== undefined) { limbTool = b.dataset.lt; refreshSel(); return; }
     if (b.dataset.ls !== undefined) { limbSize = +b.dataset.ls; refreshSel(); return; }
+    if (b.dataset.sv !== undefined) {
+      const id = b.dataset.id;
+      if (b.dataset.sv === 'use') useSaved(id);
+      else if (b.dataset.sv === 'edit') editSaved(id);
+      else if (b.dataset.sv === 'del') deleteSaved(id);
+      return;
+    }
 
     const a = b.dataset.a;
     if (a === 'undo') {
       const prev = undoStack.pop();
       if (prev) ctx.putImageData(prev, 0, 0);
+      updateStats();
     } else if (a === 'clear') {
       pushUndo();
       ctx.clearRect(0, 0, SIZE, SIZE);
+      updateStats();
+    } else if (a === 'saved') {
+      openSaved();
+    } else if (a === 'savedclose') {
+      closeSaved();
     } else if (a === 'submit') {
       const r = analyze();
       if (!r) return msg('なにか描いてね');
@@ -541,6 +705,7 @@
   });
 
   refreshSel();
+  updateStats();
 
   // ---------- 外から使う入り口 ----------
   let mode = 'draw';
@@ -550,6 +715,7 @@
     $('dp-draw').hidden = m !== 'draw';
     $('dp-limb').hidden = m !== 'limb';
     $('dp-wait').hidden = m !== 'wait';
+    if (m !== 'draw') closeSaved();
     root.querySelector('.dp-title').textContent = TITLES[m];
     if (m === 'draw') requestAnimationFrame(fit);
     if (m === 'limb') { requestAnimationFrame(fitLimb); startPreview(); }
