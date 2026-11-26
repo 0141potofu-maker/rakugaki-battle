@@ -51,6 +51,126 @@
   const players = new Map(); // slot -> {x,y,tx,ty,f,g}
   const arts = new Map();    // slot -> {rig, w, h}  (w,hはゲーム内の大きさ)
 
+  // ---------- 効果音(ブラウザの音で作る。音声ファイルは使わない) ----------
+  const Sfx = (() => {
+    let ac = null;
+    let master = null;
+    let noiseBuf = null;
+    let muted = false;
+    try { muted = localStorage.getItem('rakugaki-battle.mute') === '1'; } catch (err) { /* ほぞんできなくてもOK */ }
+
+    function ensure() {
+      if (ac) {
+        if (ac.state === 'suspended') ac.resume();
+        return ac;
+      }
+      const AC = window.AudioContext || window.webkitAudioContext;
+      if (!AC) return null;
+      ac = new AC();
+      master = ac.createGain();
+      master.gain.value = 0.35;
+      master.connect(ac.destination);
+      noiseBuf = ac.createBuffer(1, Math.floor(ac.sampleRate * 0.5), ac.sampleRate);
+      const d = noiseBuf.getChannelData(0);
+      for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+      return ac;
+    }
+    // 最初にさわったときに、音が出せるようにする(ブラウザの決まり)
+    const unlock = () => { if (!muted) ensure(); };
+    window.addEventListener('pointerdown', unlock, { passive: true });
+    window.addEventListener('keydown', unlock);
+
+    // フィルターをかけたノイズ(ガッ という音のもと)
+    function noise(t0, dur, freq, q, vol) {
+      const src = ac.createBufferSource();
+      src.buffer = noiseBuf;
+      const f = ac.createBiquadFilter();
+      f.type = 'bandpass';
+      f.frequency.value = freq;
+      f.Q.value = q;
+      const g = ac.createGain();
+      g.gain.setValueAtTime(vol, t0);
+      g.gain.exponentialRampToValueAtTime(0.001, t0 + dur);
+      src.connect(f);
+      f.connect(g);
+      g.connect(master);
+      src.start(t0);
+      src.stop(t0 + dur + 0.02);
+    }
+    // 高さがかわる音(ドン、ピーン など)
+    function tone(t0, dur, f0, f1, vol, type) {
+      const o = ac.createOscillator();
+      o.type = type || 'sine';
+      o.frequency.setValueAtTime(f0, t0);
+      o.frequency.exponentialRampToValueAtTime(Math.max(20, f1), t0 + dur);
+      const g = ac.createGain();
+      g.gain.setValueAtTime(vol, t0);
+      g.gain.exponentialRampToValueAtTime(0.001, t0 + dur);
+      o.connect(g);
+      g.connect(master);
+      o.start(t0);
+      o.stop(t0 + dur + 0.02);
+    }
+
+    return {
+      // 当たった音: 強いほど、低くて大きい。色ごとに、少し味つけ
+      hit(kb, col) {
+        if (muted || !ensure()) return;
+        const t = ac.currentTime;
+        const s = Math.min(1, (kb || 0) / 1200);
+        noise(t, 0.06 + 0.08 * s, 1800 - 900 * s, 0.8, 0.5 + 0.4 * s);
+        tone(t, 0.1 + 0.1 * s, 220 - 100 * s, 55, 0.5 + 0.4 * s, 'sine');
+        if (col === 2) tone(t, 0.12, 1600, 900, 0.16, 'square');        // 雷
+        else if (col === 1 || col === 7) tone(t, 0.1, 700, 1400, 0.14, 'triangle'); // 水・氷
+        else if (col === 0) noise(t, 0.18, 600, 0.6, 0.22);              // 火
+        else if (col === 8) tone(t, 0.08, 500, 300, 0.12, 'triangle');   // 緑
+      },
+      // 撃墜の音: 大きなドーン
+      ko() {
+        if (muted || !ensure()) return;
+        const t = ac.currentTime;
+        noise(t, 0.5, 500, 0.5, 0.7);
+        tone(t, 0.6, 320, 40, 0.7, 'sawtooth');
+        tone(t + 0.02, 0.4, 90, 30, 0.8, 'sine');
+      },
+      // カウンター成功: 金属の ピキーン
+      counter() {
+        if (muted || !ensure()) return;
+        const t = ac.currentTime;
+        tone(t, 0.25, 1320, 1300, 0.3, 'triangle');
+        tone(t + 0.06, 0.3, 1980, 1960, 0.22, 'triangle');
+        noise(t, 0.05, 3000, 1, 0.3);
+      },
+      toggle() {
+        muted = !muted;
+        try { localStorage.setItem('rakugaki-battle.mute', muted ? '1' : '0'); } catch (err) { /* そのまま */ }
+        if (!muted) ensure();
+        return muted;
+      },
+      isMuted: () => muted,
+    };
+  })();
+
+  // ---------- 画面のゆれ(強い技や撃墜のとき) ----------
+  const shakes = [];
+  function addShake(amp, dur) {
+    shakes.push({ amp, dur, t: performance.now() });
+    if (shakes.length > 8) shakes.shift();
+  }
+  function shakeOffset(now) {
+    let x = 0;
+    let y = 0;
+    for (let i = shakes.length - 1; i >= 0; i--) {
+      const s = shakes[i];
+      const age = (now - s.t) / s.dur;
+      if (age >= 1) { shakes.splice(i, 1); continue; }
+      const a = s.amp * (1 - age) * (1 - age);
+      x += Math.sin(now * 0.11 + i) * a;
+      y += Math.cos(now * 0.13 + i * 2) * a;
+    }
+    return { x: Math.max(-28, Math.min(28, x)), y: Math.max(-28, Math.min(28, y)) };
+  }
+
   // 試合が終わったときの画面
   const rsStyle = document.createElement('style');
   rsStyle.textContent = `
@@ -201,7 +321,20 @@
         projs = (m.pj || []).map((b) => ({ x: b[0], y: b[1], r: b[2], c: b[3], vx: b[4], vy: b[5], k: b[6] || 0, t: tn }));
         if (m.ev) {
           const now = performance.now();
-          for (const e of m.ev) effects.push({ k: e.k, x: e.x, y: e.y, c: e.c, t: now });
+          for (const e of m.ev) {
+            effects.push({ k: e.k, x: e.x, y: e.y, c: e.c, kb: e.kb, d: e.d, t: now });
+            // 手ごたえ: 画面のゆれと、効果音
+            if (e.k === 'hit') {
+              if (e.kb > 0) addShake(Math.min(14, 2 + e.kb / 110), 220);
+              Sfx.hit(e.kb, e.c);
+            } else if (e.k === 'ctr') {
+              addShake(8, 260);
+              Sfx.counter();
+            } else if (e.k === 'ko') {
+              addShake(24, 450);
+              Sfx.ko();
+            }
+          }
         }
       }
     };
@@ -288,6 +421,15 @@
     }
   }
   $('invite').onclick = invite;
+
+  // 音のオン・オフ
+  const muteBtn = document.createElement('button');
+  muteBtn.className = 'btn';
+  muteBtn.id = 'mute';
+  muteBtn.setAttribute('aria-label', '音のオン・オフ');
+  muteBtn.textContent = Sfx.isMuted() ? '🔇' : '🔊';
+  muteBtn.onclick = () => { muteBtn.textContent = Sfx.toggle() ? '🔇' : '🔊'; };
+  $('hud').appendChild(muteBtn);
 
   // ---------- 描画 ----------
   const cv = $('cv');
@@ -503,7 +645,8 @@
     ctx.fillRect(0, 0, cv.width, cv.height);
 
     const s = cam.s;
-    ctx.setTransform(dpr * s, 0, 0, dpr * s, dpr * (W / 2 - cam.x * s), dpr * (H / 2 - cam.y * s));
+    const sh = shakeOffset(performance.now()); // 画面のゆれ(世界だけゆれて、表示はゆれない)
+    ctx.setTransform(dpr * s, 0, 0, dpr * s, dpr * (W / 2 - cam.x * s + sh.x), dpr * (H / 2 - cam.y * s + sh.y));
 
     drawStage();
     const slots = [...players.keys()].sort((a, b) => a - b);
@@ -844,7 +987,7 @@
     }
   }
 
-  // ヒットのエフェクト(当たった場所に放射状の線)
+  // ヒットのエフェクト(当たった場所に放射状の線)。強い技ほど大きい
   function drawHitEffects() {
     const now = performance.now();
     for (const e of effects) {
@@ -857,7 +1000,7 @@
       ctx.globalAlpha = 1 - t;
       ctx.lineCap = 'round';
       const rays = big ? 12 : 8;
-      const sc = big ? 1.7 : 1;
+      const sc = big ? 1.7 : 1 + Math.min(0.9, (e.kb || 0) / 1400);
       for (let k = 0; k < rays; k++) {
         const ang = (k * Math.PI * 2) / rays + 0.4;
         const r0 = (16 + t * 24) * sc;
