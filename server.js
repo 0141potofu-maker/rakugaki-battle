@@ -252,7 +252,13 @@ function applyHit(att, tgt, hx, hy, h, events, o) {
   tgt.g = false;
   tgt.hang = 0;
   tgt.atk = null;
-  events.push({ k: 'hit', x: +hx.toFixed(1), y: +hy.toFixed(1), c: o.col });
+  // 当たった瞬間の、ほんの少しの止まり(ヒットストップ)。強い技ほど長い。連続ヒットの1発ごとは止めない
+  const lag = o.carry || h.dmg <= 1 ? 0 : Math.min(12, Math.round(2 + h.dmg * 0.5));
+  if (lag > 0) {
+    tgt.freeze = Math.max(tgt.freeze || 0, lag);
+    if (att && att.slot !== undefined) att.freeze = Math.max(att.freeze || 0, lag);
+  }
+  events.push({ k: 'hit', x: +hx.toFixed(1), y: +hy.toFixed(1), c: o.col, d: h.dmg, kb: o.carry ? 0 : Math.round(kb) });
 }
 
 // ---------- 技 ----------
@@ -942,6 +948,8 @@ function tryGrab(p, occ) {
 }
 
 function step(p, occ, env) {
+  // ヒットストップ中は、そのまま止まる(押したボタンは、おわったあとに出る)
+  if (p.freeze > 0) { p.freeze--; return; }
   const i = p.input;
   const pL = i.l && !p.prevL; // 押した瞬間
   const pR = i.r && !p.prevR;
