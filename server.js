@@ -338,7 +338,10 @@ function melee(o) {
 function rise(ground) {
   return {
     style: 'rise', total: ground ? 62 : 56, lockJump: true,
-    ctl: (p, t) => (t <= 8 ? { vx: 0, vy: 0 } : t <= 44 ? { vx: 0, vy: -540 } : null),
+    ctl: (p, t) => {
+      const mx = ((p.input.r ? 1 : 0) - (p.input.l ? 1 : 0)) * 150; // 左右に少し動ける(150を大きくすると、よく動く)
+      return t <= 8 ? { vx: 0, vy: 0 } : t <= 44 ? { vx: mx, vy: -540 } : null;
+    },
     act(p, t, fx) {
       const R = pickR(p, 'hf');
       if (t > 8 && t <= 44 && (t - 9) % 4 === 0) {
