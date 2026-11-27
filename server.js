@@ -252,6 +252,7 @@ function applyHit(att, tgt, hx, hy, h, events, o) {
   tgt.g = false;
   tgt.hang = 0;
   tgt.atk = null;
+  tgt.airSp = false; // 攻撃を受けたら、空中必殺が回復する
   // 当たった瞬間の、ほんの少しの止まり(ヒットストップ)。強い技ほど長い。連続ヒットの1発ごとは止めない
   const lag = o.carry || h.dmg <= 1 ? 0 : Math.min(12, Math.round(2 + h.dmg * 0.5));
   if (lag > 0) {
