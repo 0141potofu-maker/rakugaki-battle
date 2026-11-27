@@ -345,7 +345,7 @@ function rise(ground) {
     act(p, t, fx) {
       const R = pickR(p, 'hf');
       if (t > 8 && t <= 44 && (t - 9) % 4 === 0) {
-        fx.hit('m' + t, circ(p.x + p.f * p.bw * 0.2, p.y - p.bh * 0.55, R * 0.9 + p.bh * 0.25), JAB, { carry: { vx: 0, vy: -540 } });
+        fx.hit('m' + t, circ(p.x + p.f * p.bw * 0.2, p.y - p.bh * 0.55, R * 0.9 + p.bh * 0.25), JAB, { carry: { vx: p.vx, vy: -540 } });
       }
       if (t >= 45 && t <= 52) {
         fx.hit('fin', circ(p.x + p.f * R * 0.2, p.y - p.bh * 0.4, R * 1.2 + p.bh * 0.45), ground ? H(5, 500, 14, 70) : H(2, 250, 6, 80), { away: true });
