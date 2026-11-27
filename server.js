@@ -339,7 +339,7 @@ function rise(ground) {
   return {
     style: 'rise', total: ground ? 62 : 56, lockJump: true,
     ctl: (p, t) => {
-      const mx = ((p.input.r ? 1 : 0) - (p.input.l ? 1 : 0)) * 150; // 左右に少し動ける(150を大きくすると、よく動く)
+      const mx = ((p.input.r ? 1 : 0) - (p.input.l ? 1 : 0)) * 200; // 左右に少し動ける(150を大きくすると、よく動く)
       return t <= 8 ? { vx: 0, vy: 0 } : t <= 44 ? { vx: mx, vy: -540 } : null;
     },
     act(p, t, fx) {
@@ -406,7 +406,7 @@ const MOVES = {
   // 必殺・空中: 水の弾を下に飛ばして、その反動で上昇
   bsa: {
     style: 'shootdown', total: 40, lockJump: true,
-    ctl: (p, t) => (t >= 8 && t <= 11 ? { vy: -1080 } : null),
+    ctl: (p, t) => (t >= 8 && t <= 11 ? { vy: -1200 } : null),
     act(p, t, fx) {
       if (t === 8) {
         const R = pickR(p, 'h');
@@ -548,7 +548,7 @@ const MOVES = {
   },
   // 必殺・地上: カウンター(構えている間に攻撃を受けると、止めて反撃する)
   gsg: {
-    style: 'counter', total: 56, lockJump: true,
+    style: 'counter', total: 70, lockJump: true,
     counter: [4, 36], counterJump: 36, counterEnd: 50, // 4〜36フレーム目が受け付け時間
     animOf: (a, t) => (a.d.counterDone && t > 36 ? { ms: 'punch', at: t - 36, tt: 14 } : { ms: 'counter', at: Math.min(t, 36), tt: 36 }),
     ctl: (p, t) => ({ vx: 0 }),
@@ -581,7 +581,7 @@ const MOVES = {
   },
   // 通常・空中: 連続ヒットの突進
   ona: {
-    style: 'dash', total: 50, lockJump: true,
+    style: 'dash', total: 43, lockJump: true,
     ctl: (p, t) => (t <= 6 ? { vx: 0, vy: 0 } : t <= 28 ? { vx: p.f * 720, vy: 0 } : null),
     act(p, t, fx) {
       const R = pickR(p, 'hf');
@@ -607,7 +607,7 @@ const MOVES = {
   // 必殺・空中: 斜め上に移動して、反対側の斜め下に衝撃波
   osa: {
     style: 'dash', total: 38, lockJump: true, segs: [{ to: 21, style: 'dash' }, { to: 38, style: 'shootdown' }],
-    ctl: (p, t) => (t <= 5 ? { vx: 0, vy: 0 } : t <= 20 ? { vx: p.f * 1050, vy: -1050 } : t <= 26 ? { vx: 0, vy: 0 } : null),
+    ctl: (p, t) => (t <= 5 ? { vx: 0, vy: 0 } : t <= 20 ? { vx: p.f * 1150, vy: -1150 } : t <= 26 ? { vx: 0, vy: 0 } : null),
     act(p, t, fx) {
       if (t === 21) {
         const R = pickR(p, 'hf');
@@ -651,7 +651,7 @@ const MOVES = {
   // 必殺・空中: つららを生成しながら斜め上に移動
   csa: {
     style: 'dash', total: 42, lockJump: true,
-    ctl: (p, t) => (t <= 5 ? { vx: 0, vy: 0 } : t <= 24 ? { vx: p.f * 520, vy: -520 } : null),
+    ctl: (p, t) => (t <= 5 ? { vx: 0, vy: 0 } : t <= 24 ? { vx: p.f * 550, vy: -550 } : null),
     act(p, t, fx) {
       const R = pickR(p, 'h');
       if (t >= 8 && t <= 23 && (t - 8) % 3 === 0) {
@@ -663,7 +663,7 @@ const MOVES = {
   // ===== 緑(ツル・葉っぱ) =====
   // 通常・地上: ツルを前にのばす
   eng: {
-    style: 'shoot', total: 45,
+    style: 'shoot', total: 55,
     act(p, t, fx) {
       const R = pickR(p, 'h');
       const L = 220 + R;
@@ -790,7 +790,7 @@ const MOVES = {
   // 通常・空中: 下に紫の弾を放って、少し上昇
   pna: {
     style: 'shootdown', total: 40, lockJump: true,
-    ctl: (p, t) => (t >= 7 && t <= 9 ? { vy: -700 } : null),
+    ctl: (p, t) => (t >= 7 && t <= 9 ? { vy: -730 } : null),
     act(p, t, fx) {
       if (t === 7) {
         const R = pickR(p, 'h');
